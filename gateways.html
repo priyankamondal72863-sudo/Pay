@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block c %}<h2>Gateways</h2>
+{% set c=creds.get('paytm') %}
+<div class="card"><h3>Paytm {% if c %}<span class="tag {{'active' if c.enabled else 'suspended'}}">{{'Enabled' if c.enabled else 'Disabled'}}</span>{% endif %}</h3>
+<form method="post" action="/gateways/paytm/save"><input type="hidden" name="csrf" value="{{csrf}}">
+<label>Merchant ID (MID)</label><input name="mid" required placeholder="From Paytm dashboard">
+<label>Merchant Key {% if c %}(saved — leave blank to keep){% endif %}</label><input type="password" name="key" autocomplete="off" placeholder="{{'•••••••• saved' if c else ''}}" {{'' if c else 'required'}}>
+<label>POS ID (QR)</label><input name="pos_id" placeholder="POS1">
+<label>Environment</label><select name="env"><option value="staging" {{'selected' if c and c.env=='staging'}}>Staging</option><option value="production" {{'selected' if c and c.env=='production'}}>Production</option></select>
+<button>Save credentials</button></form><hr style="border-color:var(--line)">
+<p><small style="color:var(--mut)">Callback / Webhook URL (set in Paytm dashboard):</small><code>{{base}}/callback/paytm</code></p>
+{% if c %}<p>Last test: {% if c.last_test_at %}<span class="{{'active' if c.last_test_ok else 'suspended'}}">{{c.last_test_msg}}</span> ({{c.last_test_at.strftime('%d %b %H:%M')}} UTC){% else %}never{% endif %}</p>
+<div class="row"><form method="post" action="/gateways/paytm/test"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">Test connection</button></form>
+<form method="post" action="/gateways/paytm/{{'disable' if c.enabled else 'enable'}}"><input type="hidden" name="csrf" value="{{csrf}}"><button class="{{'danger' if c.enabled else 'gold'}}">{{'Disable' if c.enabled else 'Enable'}}</button></form></div>{% endif %}</div>
+<div class="card"><h3>FamPay / FamApp <span class="tag">Unavailable</span></h3><p style="color:var(--mut)">No official/authorized FamPay merchant API is integrated. Personal-UPI "auto verification" is not offered because it can't be verified securely. This module activates only when an authorized provider API is added.</p></div>{% endblock %}

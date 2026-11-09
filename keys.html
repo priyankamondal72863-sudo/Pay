@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block c %}<h2>API Keys</h2>
+{% if newkey %}<div class="card" style="border-color:var(--gold)"><b>Copy your key now — it will not be shown again.</b><code id="nk">{{newkey}}</code><button onclick="navigator.clipboard.writeText(document.getElementById('nk').innerText);this.innerText='Copied'">Copy</button></div>{% endif %}
+<form class="card row" method="post" action="/keys/create"><input type="hidden" name="csrf" value="{{csrf}}"><input name="label" placeholder="Label (optional)" style="flex:1;margin:0"><button>Create API key</button></form>
+<div class="card wrap"><table><tr><th>Key</th><th>Label</th><th>Uses</th><th>Last used</th><th></th></tr>
+{% for k in keys %}<tr><td>{{k.prefix}}••••••</td><td>{{k.label}}</td><td>{{k.uses}}</td><td>{{k.last_used.strftime('%d %b %H:%M') if k.last_used else '-'}}</td>
+<td>{% if k.revoked %}<span class="suspended">Revoked</span>{% else %}<form method="post" action="/keys/{{k.id}}/revoke" onsubmit="return confirm('Revoke this key?')"><input type="hidden" name="csrf" value="{{csrf}}"><button class="danger">Revoke</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan=5 style="color:var(--mut)">No keys yet.</td></tr>{% endfor %}</table></div>{% endblock %}

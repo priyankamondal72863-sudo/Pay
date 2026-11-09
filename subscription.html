@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block c %}<h2>Subscription</h2>
+<div class="card"><h3>{{plan.name}} plan</h3><p>{{ ('Expires ' ~ sub.end.strftime('%d %b %Y')) if sub and sub.end else ('Lifetime' if sub else 'Free tier — no expiry') }}</p>
+<p style="color:var(--mut)">{{plan.txn_limit}} transactions/month · {{plan.max_keys}} API key(s) · {{plan.req_limit}} API requests · gateways: {{plan.gateways}} · support: {{plan.support}}</p>
+<p style="color:var(--mut)">To upgrade or renew, pay the owner and ask them to activate your plan.</p></div>
+<div class="card wrap"><h3>History</h3><table><tr><th>Plan</th><th>Start</th><th>End</th><th>Paid</th><th>Status</th><th></th></tr>
+{% for h in hist %}<tr><td>{{plans[h.plan_id].name}}</td><td>{{h.start.strftime('%d %b %Y')}}</td><td>{{h.end.strftime('%d %b %Y') if h.end else '-'}}</td><td>{{h.price_paid|rs}}</td><td>{{h.status}}</td><td><a href="/subscription/{{h.id}}/receipt">Receipt</a></td></tr>
+{% else %}<tr><td colspan=6 style="color:var(--mut)">No paid subscriptions yet.</td></tr>{% endfor %}</table></div>{% endblock %}

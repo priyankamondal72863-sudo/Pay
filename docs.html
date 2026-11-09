@@ -1,0 +1,58 @@
+{% extends "base.html" %}{% block c %}{% raw %}<h2>API Docs</h2>
+<div class="card"><h3>Authentication</h3><p style="color:var(--mut)">Create a key under API Keys. Send it as <code style="display:inline;padding:1px 6px">X-API-Key</code> header, <code style="display:inline;padding:1px 6px">Authorization: Bearer KEY</code>, or <code style="display:inline;padding:1px 6px">?api_key=KEY</code> (simple GET endpoints). 60 requests/min per key.</p></div>
+{% endraw %}
+<div class="card"><small style="color:var(--mut)">GET</small><h3>Create an order</h3><pre>curl "{{base}}/api/create_order?amount=99&order_id=MY1&api_key=ZP_XXXX"
+→ {"status":"success","data":{"order_id":"ORD..","qr_url":"{{base}}/pay/ORD../qr.svg","payment_url":"{{base}}/pay/ORD..","amount":99.0,"expires_at":".."}}</pre></div>
+<div class="card"><small style="color:var(--mut)">GET</small><h3>Check payment status</h3><pre>curl "{{base}}/api/verify?order_id=ORD..&api_key=ZP_XXXX"
+→ {"status":"success","data":{"order_id":"ORD..","amount":99.0,"utr":"..","payment_time":".."}}
+(unpaid → {"status":"pending|failed|expired","data":null})</pre></div>
+<div class="card"><h3>JSON API v1</h3><pre>POST /api/v1/payment/create   {"amount":100,"order_id":"ORDER10001","gateway":"paytm","customer":{"name":"A"}}
+GET  /api/v1/payment/status/{order_id}
+POST /api/v1/payment/verify   {"order_id":"ORDER10001"}
+POST /api/v1/payment/refund   {"order_id":"ORDER10001","amount":50}   (amount optional = full)
+GET  /api/v1/transactions   GET /api/v1/account   GET /api/v1/gateways
+POST /api/v1/webhooks/test</pre>
+<p style="color:var(--mut)">Statuses: CREATED, PENDING, SUCCESS, FAILED, EXPIRED, REFUND_PENDING, REFUNDED. Errors: <code style="display:inline;padding:1px 6px">{"success":false,"error":".."}</code> with HTTP 400/401/403/404/429/502.</p></div>
+{% raw %}
+<div class="card"><h3>Webhooks</h3><p style="color:var(--mut)">Events: payment.success, payment.failed, payment.expired, payment.refunded, webhook.test — sent only after provider verification. Headers: <b>X-Zyvo-Timestamp</b>, <b>X-Zyvo-Signature</b> = <code style="display:inline;padding:1px 6px">sha256=HMAC_SHA256(secret, timestamp + "." + rawBody)</code>. Reject if timestamp is older than 5 minutes. Deduplicate on <b>event_id</b>. Reply with any 2xx. Failed deliveries retry with backoff.</p>
+<pre>{"event":"payment.success","event_id":"ORD..:payment.success","order_id":"ORDER10001","transaction_id":"..","amount":100.0,"currency":"INR","status":"SUCCESS"}</pre></div>
+<div class="card"><h3>Python (Flask) — create + verify webhook</h3><pre>import hmac, hashlib, time, requests
+from flask import Flask, request, abort
+SECRET = "your_webhook_secret"; KEY = "ZP_XXXX"; BASE = "https://YOUR-APP.onrender.com"
+app = Flask(__name__)
+def create(amount, order_id):
+    return requests.post(BASE + "/api/v1/payment/create", headers={"X-API-Key": KEY},
+        json={"amount": amount, "order_id": order_id, "gateway": "paytm"}).json()["payment_url"]
+@app.post("/zyvo-webhook")
+def hook():
+    ts = request.headers.get("X-Zyvo-Timestamp", "0"); sig = request.headers.get("X-Zyvo-Signature", "")
+    body = request.get_data(as_text=True)
+    exp = "sha256=" + hmac.new(SECRET.encode(), (ts + "." + body).encode(), hashlib.sha256).hexdigest()
+    if abs(time.time() - int(ts)) > 300 or not hmac.compare_digest(exp, sig): abort(401)
+    data = request.get_json()
+    if data["event"] == "payment.success": print("PAID", data["order_id"])  # fulfil order once per event_id
+    return "ok"</pre></div>
+<div class="card"><h3>PHP</h3><pre>$ch = curl_init("$BASE/api/v1/payment/create");
+curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_POST=>true,
+  CURLOPT_HTTPHEADER=>["X-API-Key: $KEY","Content-Type: application/json"],
+  CURLOPT_POSTFIELDS=>json_encode(["amount"=>100,"order_id"=>"ORDER10001","gateway"=>"paytm"])]);
+$res = json_decode(curl_exec($ch), true); header("Location: ".$res["payment_url"]);
+// webhook: $body=file_get_contents("php://input"); $ts=$_SERVER["HTTP_X_ZYVO_TIMESTAMP"];
+// $exp="sha256=".hash_hmac("sha256","$ts.$body",$SECRET); hash_equals($exp,$_SERVER["HTTP_X_ZYVO_SIGNATURE"]);</pre></div>
+<div class="card"><h3>JavaScript (Node 18+)</h3><pre>const crypto = require("crypto");
+const r = await fetch(BASE + "/api/v1/payment/create", { method: "POST",
+  headers: { "X-API-Key": KEY, "Content-Type": "application/json" },
+  body: JSON.stringify({ amount: 100, order_id: "ORDER10001", gateway: "paytm" }) });
+const { payment_url } = await r.json();
+// webhook (express.raw body): 
+const exp = "sha256=" + crypto.createHmac("sha256", SECRET).update(ts + "." + rawBody).digest("hex");</pre></div>
+<div class="card"><h3>Telegram bot (python-telegram-bot v20)</h3><pre>import requests
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    r = requests.get(BASE + "/api/create_order", params={"amount": 99, "api_key": KEY}).json()["data"]
+    await update.message.reply_photo(r["qr_url"], caption="Pay Rs 99. Order " + r["order_id"] + "\n" + r["payment_url"])
+    # then poll /api/verify?order_id=... or use the webhook, and deliver only when status == "success"
+Application.builder().token("BOT_TOKEN").build().add_handler(CommandHandler("buy", buy))</pre></div>
+<div class="card"><h3>Test vs production</h3><p style="color:var(--mut)">Use Paytm <b>Staging</b> credentials first; switch Environment to Production in Gateways only after Paytm approves your account. Never mark an order paid from a redirect or screenshot — only from a verified webhook or /verify.</p></div>
+{% endraw %}{% endblock %}

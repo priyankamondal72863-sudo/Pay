@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block c %}<div class="card" style="max-width:460px;margin:30px auto"><h2>Create account</h2>
+<form method="post"><input type="hidden" name="csrf" value="{{csrf}}">
+<label>Full name</label><input name="name" required><label>Username</label><input name="username" required>
+<label>Email</label><input type="email" name="email" required><label>Phone</label><input name="phone" required>
+<label>Password (8+ chars)</label><input type="password" name="password" required><label>Confirm password</label><input type="password" name="confirm" required>
+<button>Register</button></form></div>{% endblock %}
