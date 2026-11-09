@@ -1,8 +1,8 @@
-{% extends "base.html" %}{% block c %}<h2>Dashboard</h2>
-<div class="grid">
-<div class="stat"><small>Total transactions</small><div>{{s.total}}</div></div><div class="stat"><small>Successful</small><div class="SUCCESS">{{s.ok}}</div></div>
-<div class="stat"><small>Failed</small><div class="FAILED">{{s.failed}}</div></div><div class="stat"><small>Pending</small><div class="PENDING">{{s.pending}}</div></div>
-<div class="stat"><small>Total volume</small><div>{{s.vol|rs}}</div></div><div class="stat"><small>Success rate</small><div>{{s.rate}}%</div></div>
+{% extends "base.html" %}{% block c %}<h2>Overview</h2><p style="color:var(--mut);margin-top:-8px">Your payment performance at a glance.</p>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+<div class="stat"><small>TOTAL PAYMENTS</small><div class="big">{{s.total}}</div></div><div class="stat"><small>SUCCESSFUL</small><div class="SUCCESS big">{{s.ok}}</div></div>
+<div class="stat"><small>FAILED</small><div class="FAILED big">{{s.failed}}</div></div><div class="stat"><small>Pending</small><div class="PENDING">{{s.pending}}</div></div>
+<div class="stat"><small>SUCCESSFUL VOLUME</small><div class="big">{{s.vol|rs}}</div></div><div class="stat"><small>Success rate</small><div>{{s.rate}}%</div></div>
 <div class="stat"><small>Avg amount</small><div>{{s.avg|rs}}</div></div><div class="stat"><small>Today txns</small><div>{{s.t_all}}</div></div>
 <div class="stat"><small>Today successful</small><div>{{s.t_ok}}</div></div><div class="stat"><small>Today volume</small><div>{{s.t_vol|rs}}</div></div></div>
 <div class="card"><h3>Last 7 days volume</h3>{% for d,v in days %}<div class="row" style="margin:6px 0"><span style="width:60px;color:var(--mut)">{{d}}</span><div style="flex:1"><div class="bar" style="width:{{(v*100/maxd)|int}}%;min-width:3px"></div></div><span>{{v|rs}}</span></div>{% endfor %}</div>

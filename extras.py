@@ -19,9 +19,9 @@ router = APIRouter()
 BACKOFF = [60, 300, 1800, 7200, 21600, 43200]
 
 # ---------- plans ----------
-DEFAULT_PLANS = [("Free", 0, 0, 1000, 100, 1, "paytm", "Community"), ("Basic", 29900, 30, 10000, 1000, 2, "paytm", "Email"),
-                 ("Pro", 99900, 30, 100000, 10000, 5, "paytm", "Priority"), ("Business", 299900, 30, 1000000, 100000, 20, "paytm", "Dedicated"),
-                 ("Lifetime", 999900, 0, 1000000, 100000, 20, "paytm", "Priority")]
+DEFAULT_PLANS = [("Free", 0, 0, 1000, 100, 1, "paytm,fampay", "Community"), ("Basic", 29900, 30, 10000, 1000, 2, "paytm,fampay", "Email"),
+                 ("Pro", 99900, 30, 100000, 10000, 5, "paytm,fampay", "Priority"), ("Business", 299900, 30, 1000000, 100000, 20, "paytm,fampay", "Dedicated"),
+                 ("Lifetime", 999900, 0, 1000000, 100000, 20, "paytm,fampay", "Priority")]
 def plan_for(db, uid):
     s = db.scalar(select(Subscription).where(Subscription.user_id == uid, Subscription.status == "active").order_by(Subscription.id.desc()))
     if s and (s.end is None or s.end > now()): return db.get(Plan, s.plan_id), s

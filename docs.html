@@ -1,11 +1,12 @@
 {% extends "base.html" %}{% block c %}{% raw %}<h2>API Docs</h2>
 <div class="card"><h3>Authentication</h3><p style="color:var(--mut)">Create a key under API Keys. Send it as <code style="display:inline;padding:1px 6px">X-API-Key</code> header, <code style="display:inline;padding:1px 6px">Authorization: Bearer KEY</code>, or <code style="display:inline;padding:1px 6px">?api_key=KEY</code> (simple GET endpoints). 60 requests/min per key.</p></div>
 {% endraw %}
-<div class="card"><small style="color:var(--mut)">GET</small><h3>Create an order</h3><pre>curl "{{base}}/api/create_order?amount=99&order_id=MY1&api_key=ZP_XXXX"
+<div class="card"><small style="color:var(--mut)">GET</small><h3>Create an order</h3><pre>curl "{{base}}/api/create_order.php?amount=99&order_id=MY1&api_key=ZP_XXXX"
 → {"status":"success","data":{"order_id":"ORD..","qr_url":"{{base}}/pay/ORD../qr.svg","payment_url":"{{base}}/pay/ORD..","amount":99.0,"expires_at":".."}}</pre></div>
-<div class="card"><small style="color:var(--mut)">GET</small><h3>Check payment status</h3><pre>curl "{{base}}/api/verify?order_id=ORD..&api_key=ZP_XXXX"
+<div class="card"><small style="color:var(--mut)">GET</small><h3>Check payment status</h3><pre>curl "{{base}}/api/verify.php?order_id=ORD..&api_key=ZP_XXXX"
 → {"status":"success","data":{"order_id":"ORD..","amount":99.0,"utr":"..","payment_time":".."}}
 (unpaid → {"status":"pending|failed|expired","data":null})</pre></div>
+<div class="card"><small style="color:var(--mut)">BONUS</small><h3>Ready-made checkout page (no code needed)</h3><p style="color:var(--mut)">Send your customer this link: it shows the QR and flips to “✅ Payment Successful” on its own.</p><pre>{{base}}/checkout.php?amount=99&api_key=ZP_XXXX&order_id=MY1</pre></div>
 <div class="card"><h3>JSON API v1</h3><pre>POST /api/v1/payment/create   {"amount":100,"order_id":"ORDER10001","gateway":"paytm","customer":{"name":"A"}}
 GET  /api/v1/payment/status/{order_id}
 POST /api/v1/payment/verify   {"order_id":"ORDER10001"}

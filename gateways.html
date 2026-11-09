@@ -11,4 +11,14 @@
 {% if c %}<p>Last test: {% if c.last_test_at %}<span class="{{'active' if c.last_test_ok else 'suspended'}}">{{c.last_test_msg}}</span> ({{c.last_test_at.strftime('%d %b %H:%M')}} UTC){% else %}never{% endif %}</p>
 <div class="row"><form method="post" action="/gateways/paytm/test"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">Test connection</button></form>
 <form method="post" action="/gateways/paytm/{{'disable' if c.enabled else 'enable'}}"><input type="hidden" name="csrf" value="{{csrf}}"><button class="{{'danger' if c.enabled else 'gold'}}">{{'Disable' if c.enabled else 'Enable'}}</button></form></div>{% endif %}</div>
-<div class="card"><h3>FamPay / FamApp <span class="tag">Unavailable</span></h3><p style="color:var(--mut)">No official/authorized FamPay merchant API is integrated. Personal-UPI "auto verification" is not offered because it can't be verified securely. This module activates only when an authorized provider API is added.</p></div>{% endblock %}
+{% set f=creds.get('fampay') %}
+<div class="card"><h3>FamPay / FamApp {% if f %}<span class="tag {{'active' if f.enabled else 'suspended'}}">{{'Enabled' if f.enabled else 'Disabled'}}</span>{% endif %}</h3>
+<form method="post" action="/gateways/fampay/save"><input type="hidden" name="csrf" value="{{csrf}}">
+<label>Your Name / Shop Name</label><input name="shop" required placeholder="RG CHEAT">
+<label>UPI ID</label><input name="upi" required placeholder="1234567890@fam">
+<label>Gmail Address (linked with FamPay)</label><input name="gmail" type="email" required placeholder="you@gmail.com">
+<label>Gmail App Password {% if f %}(saved - leave blank to keep){% endif %}</label><input type="password" name="app_password" autocomplete="off" placeholder="{{'•••• already set' if f else '16 digit app password'}}" {{'' if f else 'required'}}>
+<button>Save Payment Setup</button></form>
+{% if f %}<p>Last test: {% if f.last_test_at %}<span class="{{'active' if f.last_test_ok else 'suspended'}}">{{f.last_test_msg}}</span>{% else %}never{% endif %}</p>
+<div class="row"><form method="post" action="/gateways/fampay/test"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">Test Gmail</button></form>
+<form method="post" action="/gateways/fampay/{{'disable' if f.enabled else 'enable'}}"><input type="hidden" name="csrf" value="{{csrf}}"><button class="{{'danger' if f.enabled else 'gold'}}">{{'Disable' if f.enabled else 'Enable'}}</button></form></div>{% endif %}</div>{% endblock %}

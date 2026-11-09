@@ -24,11 +24,17 @@ templates.env.filters["rs"] = lambda p: f"₹{(p or 0)/100:,.2f}"
 
 def _startup_inner():
     Base.metadata.create_all(engine)
-    em, pw = os.getenv("ADMIN_EMAIL"), os.getenv("ADMIN_PASSWORD")
-    if em and pw:
+    em, pw = (os.getenv("ADMIN_EMAIL") or "admin@rgcheat.local"), os.getenv("ADMIN_PASSWORD")
+    un = (os.getenv("ADMIN_USERNAME") or "owner").lower()
+    if pw:  # env is the source of truth for the owner login: created on first boot, updated if you change the env vars
         with SessionLocal() as db:
-            if not db.scalar(select(User).where(User.email == em.lower())):
-                db.add(User(name="Owner", username="owner", email=em.lower(), phone="", pw_hash=sec.hash_pw(pw), role="owner")); db.commit()
+            o = db.scalar(select(User).where(User.role == "owner").order_by(User.id))
+            if not o:
+                db.add(User(name="Owner", username=un, email=em.lower(), phone="", pw_hash=sec.hash_pw(pw), role="owner"))
+            else:
+                o.username = un
+                if not sec.check_pw(pw, o.pw_hash): o.pw_hash = sec.hash_pw(pw)
+            db.commit()
     from extras import start
     start()
 
@@ -155,6 +161,28 @@ def paytm_action(action: str, request: Request, csrf: str = Form(""), u=Depends(
         c.enabled = action == "enable"; flash(request, f"Paytm {action}d.")
     db.commit(); return go("/gateways")
 
+@app.post("/gateways/fampay/save")
+def fampay_save(request: Request, shop: str = Form(), upi: str = Form(), gmail: str = Form(), app_password: str = Form(""), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "fampay"))
+    old = sec.dec(c.data_enc) if c else {}
+    pw = app_password.replace(" ", "").strip() or old.get("app_password", "")
+    if not pw or "@" not in upi or "@" not in gmail: flash(request, "Shop name, UPI ID, Gmail and App Password required.", "err"); return go("/gateways")
+    data = sec.enc({"shop": shop.strip()[:60], "upi": upi.strip(), "gmail": gmail.strip(), "app_password": pw})
+    if c: c.data_enc = data
+    else: db.add(GatewayCred(user_id=u.id, gateway="fampay", data_enc=data, env="production"))
+    audit(db, u.id, "gateway_save", "fampay"); db.commit(); flash(request, "FamPay setup saved (encrypted)."); return go("/gateways")
+@app.post("/gateways/fampay/{action}")
+def fampay_action(action: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "fampay"))
+    if not c: flash(request, "Save setup first.", "err"); return go("/gateways")
+    if action == "test":
+        ok, msg = gw.fampay.test(sec.dec(c.data_enc), c.env)
+        c.last_test_at, c.last_test_ok, c.last_test_msg = now(), ok, msg; flash(request, msg, "ok" if ok else "err")
+    elif action in ("enable", "disable"): c.enabled = action == "enable"; flash(request, f"FamPay {action}d.")
+    db.commit(); return go("/gateways")
+
 # ---------- api keys ----------
 @app.get("/keys")
 def keys(request: Request, u=Depends(current), db: Session = Depends(get_db)):
@@ -189,6 +217,11 @@ def create_payment(db, user, amount, gateway, merchant_order_id, customer):
     cfg, env = cfg_for(db, user.id, gateway)
     if not cfg: raise HTTPException(400, f"Gateway '{gateway}' not configured/enabled")
     pay_id = "ORD" + secrets.token_hex(8).upper()
+    if gateway == "fampay":  # unique-paise adjustment (+1..+99 paise) so each pending order has its own exact amount
+        used = set(db.scalars(select(Txn.amount).where(Txn.user_id == user.id, Txn.gateway == "fampay", Txn.status == "PENDING", Txn.expires_at > now())))
+        adj = next((a for a in range(0, 100) if amount + a not in used), None)
+        if adj is None: raise HTTPException(429, "Too many pending payments, try again shortly")
+        amount += adj
     try: r = ad.create(cfg, env, pay_id, amount)
     except Exception as e: raise HTTPException(502, str(e)[:200])
     t = Txn(pay_id=pay_id, user_id=user.id, merchant_order_id=merchant_order_id, gateway=gateway, amount=amount, status="PENDING",
@@ -200,11 +233,13 @@ def _refresh(db, t):
     cfg, env = cfg_for(db, t.user_id, t.gateway)
     if cfg:
         try:
-            r = gw.get(t.gateway).status(cfg, env, t.pay_id)
+            r = gw.get(t.gateway).status(cfg, env, t.pay_id, amount=t.amount, since=t.created)
             t = db.scalar(select(Txn).where(Txn.id == t.id).with_for_update().execution_options(populate_existing=True))
             if t.status in ("PENDING", "CREATED"):
                 if r["state"] == "SUCCESS":
-                    if r["order_id"] == t.pay_id and r["amount"] == t.amount: t.status, t.provider_ref, t.updated = "SUCCESS", r["txn_id"] or t.provider_ref, now()
+                    dup = r["txn_id"] and db.scalar(select(Txn.id).where(Txn.gateway == t.gateway, Txn.user_id == t.user_id, Txn.provider_ref == r["txn_id"], Txn.id != t.id))
+                    if dup: audit(db, t.user_id, "verify_dup_utr", t.pay_id)
+                    elif r["order_id"] == t.pay_id and r["amount"] == t.amount: t.status, t.provider_ref, t.updated = "SUCCESS", r["txn_id"] or t.provider_ref, now()
                     else: audit(db, t.user_id, "verify_mismatch", t.pay_id)
                 elif r["state"] == "FAILED": t.status, t.updated = "FAILED", now()
         except Exception as e: audit(db, t.user_id, "verify_error", f"{t.pay_id}: {e}")
@@ -240,8 +275,15 @@ async def api_create(request: Request, u=Depends(api_user), db: Session = Depend
     except Exception: raise HTTPException(400, "amount required")
     t = create_payment(db, u, amt, b.get("gateway", "paytm"), (b.get("order_id") or None), b.get("customer"))
     return {"success": True, **tx_json(t, request)}
+def pick_gateway(db, u, gateway):
+    if gateway: return gateway
+    for g in ("fampay", "paytm"):  # first enabled gateway of the merchant
+        if cfg_for(db, u.id, g)[0]: return g
+    return "paytm"
 @app.get("/api/create_order")  # simple GET style: ?amount=99&api_key=...
-def api_create_get(request: Request, amount: float, gateway: str = "paytm", order_id: str = "", u=Depends(api_user), db: Session = Depends(get_db)):
+@app.get("/api/create_order.php")
+def api_create_get(request: Request, amount: float, gateway: str = "", order_id: str = "", u=Depends(api_user), db: Session = Depends(get_db)):
+    gateway = pick_gateway(db, u, gateway)
     t = create_payment(db, u, round(amount * 100), gateway, order_id or None, None)
     return {"status": "success", "data": {**tx_json(t, request), "qr_url": f"{base_url(request)}/pay/{t.pay_id}/qr.svg", "expires_at": t.expires_at.isoformat() + "Z"}}
 def _lookup(db, u, oid):
@@ -252,6 +294,7 @@ def _lookup(db, u, oid):
 def api_status(oid: str, request: Request, u=Depends(api_user), db: Session = Depends(get_db)):
     return {"success": True, **tx_json(refresh(db, _lookup(db, u, oid)), request)}
 @app.get("/api/verify")
+@app.get("/api/verify.php")
 def api_verify(order_id: str, request: Request, u=Depends(api_user), db: Session = Depends(get_db)):
     t = refresh(db, _lookup(db, u, order_id))
     if t.status != "SUCCESS": return {"status": t.status.lower(), "data": None}
@@ -270,6 +313,10 @@ def _pay(db, pay_id):
     t = db.scalar(select(Txn).where(Txn.pay_id == pay_id))
     if not t: raise HTTPException(404, "Not found")
     return t
+@app.get("/checkout.php")  # ready-made checkout: /checkout.php?amount=99&api_key=KEY[&order_id=X]
+def checkout_php(request: Request, amount: float, api_key: str = "", order_id: str = "", gateway: str = "", u=Depends(api_user), db: Session = Depends(get_db)):
+    t = create_payment(db, u, round(amount * 100), pick_gateway(db, u, gateway), order_id or None, None)
+    return go(f"/pay/{t.pay_id}")
 @app.get("/pay/{pay_id}")
 def pay_page(pay_id: str, request: Request, db: Session = Depends(get_db)):
     t = _pay(db, pay_id); m = db.get(User, t.user_id)

@@ -38,7 +38,7 @@ def create(cfg, env, pay_id, amount_paise):
     if info.get("resultStatus") not in ("SUCCESS",) or not b.get("qrData"):
         raise RuntimeError(f"Paytm: {info.get('resultMsg', 'QR creation failed')} ({info.get('resultCode')})")
     return {"qr_data": b["qrData"], "provider_ref": str(b.get("qrCodeId", ""))}
-def status(cfg, env, pay_id):
+def status(cfg, env, pay_id, **kw):
     res = _post(cfg, env, "/v3/order/status", {"mid": cfg["mid"], "orderId": pay_id})
     b = res.get("body", {}); st = b.get("resultInfo", {}).get("resultStatus", "")
     state = {"TXN_SUCCESS": "SUCCESS", "TXN_FAILURE": "FAILED"}.get(st, "PENDING")

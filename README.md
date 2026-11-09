@@ -14,3 +14,9 @@ Not yet done: maintenance mode, support tickets, IP whitelist, enforcing the pla
 
 ## Keep-alive
 The service pings its own /healthz every 5 min (uses RENDER_EXTERNAL_URL, set by Render automatically) so the free instance does not go to sleep.
+
+## Part 3 (final)
+- Admin login: set ADMIN_USERNAME + ADMIN_EMAIL + ADMIN_PASSWORD (first boot) -> log in at /login with the username or email -> /admin.
+- FamPay: Gateways -> FamPay (Shop name, UPI ID, Gmail, 16-digit App Password) -> Test Gmail -> Enable. Gmail needs 2-step verification + IMAP on.
+- API: /api/create_order.php?amount=99&api_key=KEY , /api/verify.php?order_id=ORD..&api_key=KEY , /checkout.php?amount=99&api_key=KEY
+- FamPay orders get a unique paise amount (+0..+99 paise) so each payment can be matched to its order.
