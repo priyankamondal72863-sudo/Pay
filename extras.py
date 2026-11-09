@@ -102,6 +102,7 @@ def deliver(db, d):
 # ---------- payment status changes ----------
 EVENTS = {"SUCCESS": "payment.success", "FAILED": "payment.failed", "EXPIRED": "payment.expired", "REFUNDED": "payment.refunded"}
 def on_change(db, t):
+    if '"test": true' in (t.customer or ""): return  # Rs 1 gateway test payments never trigger webhooks/alerts
     ev = EVENTS.get(t.status)
     if not ev: return
     enqueue(db, t.user_id, f"{t.pay_id}:{ev}", ev, {"order_id": t.merchant_order_id or t.pay_id, "pay_id": t.pay_id, "transaction_id": t.provider_ref,

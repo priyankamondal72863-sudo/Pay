@@ -135,19 +135,42 @@ def transactions(request: Request, status: str = "", gateway: str = "", search: 
 @app.get("/gateways")
 def gateways(request: Request, u=Depends(current), db: Session = Depends(get_db)):
     creds = {c.gateway: c for c in db.scalars(select(GatewayCred).where(GatewayCred.user_id == u.id))}
-    return render(request, "gateways.html", u, creds=creds, adapters=gw.ADAPTERS)
+    pcfg = {}
+    if creds.get("paytm"):
+        try: d = sec.dec(creds["paytm"].data_enc); pcfg = {"shop": d.get("shop", ""), "upi": d.get("upi", ""), "mid": d.get("mid", ""), "key": bool(d.get("key"))}
+        except Exception: pcfg = {}
+    return render(request, "gateways.html", u, creds=creds, adapters=gw.ADAPTERS, pcfg=pcfg)
 @app.post("/gateways/paytm/save")
-def paytm_save(request: Request, mid: str = Form(), key: str = Form(""), pos_id: str = Form(""), env: str = Form("staging"), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+def paytm_save(request: Request, shop: str = Form(""), upi: str = Form(), mid: str = Form(), key: str = Form(""), env: str = Form("production"), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
     if env not in ("staging", "production"): raise HTTPException(400)
+    upi, mid = upi.strip(), mid.strip()
+    if "@" not in upi or not mid: flash(request, "Shop name, UPI ID and MID are required.", "err"); return go("/gateways")
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "paytm"))
     old = sec.dec(c.data_enc) if c else {}
-    key = key.strip() or old.get("key", "")
-    if not key: flash(request, "Merchant Key required.", "err"); return go("/gateways")
-    data = sec.enc({"mid": mid.strip(), "key": key, "pos_id": pos_id.strip()})
+    key = key.strip() or old.get("key", "")  # Merchant Key is optional
+    data = sec.enc({"shop": (shop.strip() or u.name)[:60], "upi": upi, "mid": mid, "key": key})
     if c: c.data_enc, c.env = data, env
     else: db.add(GatewayCred(user_id=u.id, gateway="paytm", data_enc=data, env=env))
-    audit(db, u.id, "gateway_save", "paytm"); db.commit(); flash(request, "Paytm credentials saved (encrypted)."); return go("/gateways")
+    audit(db, u.id, "gateway_save", "paytm"); db.commit(); flash(request, "Paytm setup saved (encrypted). Now press Rs 1 Test Payment."); return go("/gateways")
+@app.post("/gateways/{gname}/testpay")
+def gateway_testpay(gname: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+    """Creates a Rs 1 QR with the saved credentials (even if the gateway is not enabled yet). Pay it: SUCCESS = gateway works."""
+    check_csrf(request, csrf)
+    ad = gw.get(gname)
+    if not ad or not ad.AVAILABLE: raise HTTPException(404)
+    c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == gname))
+    if not c: flash(request, "Save setup first.", "err"); return go("/gateways")
+    if not sec.rate_ok(f"testpay:{u.id}", 10, 300): flash(request, "Too many tests. Wait a few minutes.", "err"); return go("/gateways")
+    pay_id = "ORD" + secrets.token_hex(8).upper(); amount = 100
+    if gname == "fampay":
+        used = set(db.scalars(select(Txn.amount).where(Txn.user_id == u.id, Txn.gateway == "fampay", Txn.status == "PENDING", Txn.expires_at > now())))
+        amount += next((a for a in range(0, 100) if amount + a not in used), 0)
+    try: r = ad.create(sec.dec(c.data_enc), c.env, pay_id, amount)
+    except Exception as e: flash(request, f"Test failed: {str(e)[:200]}", "err"); return go("/gateways")
+    t = Txn(pay_id=pay_id, user_id=u.id, merchant_order_id="TEST-" + pay_id[3:], gateway=gname, amount=amount, status="PENDING",
+            customer=json.dumps({"test": True}), qr_data=r["qr_data"], provider_ref=r["provider_ref"], expires_at=now() + timedelta(minutes=10))
+    db.add(t); audit(db, u.id, "gateway_testpay", gname); db.commit(); return go(f"/pay/{t.pay_id}")
 @app.post("/gateways/paytm/{action}")
 def paytm_action(action: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
