@@ -12,35 +12,44 @@ from extras import plan_for, notify
 
 router = APIRouter()
 TENURES = (30, 90, 180, 365)
-LABEL = {"paytm": "Paytm", "fampay": "FamePay", "bharatpe": "BharatPe", "bank": "Bank"}
+LABEL = {"paytm": "Paytm", "fampay": "FamPay"}
+REMOVED = ("bank", "bharatpe")  # discontinued plans: deleted when unused, hidden everywhere otherwise
+HIDE = ("", "free") + REMOVED
 FEATURES = {
-    "trial": ["{h} hours of full access", "FamePay, Paytm & BharatPe", "All payment tools included", "One-time free trial"],
-    "fampay": ["FamePay configuration only", "Gmail App Password security", "Live payments & payment links", "API keys and webhooks"],
+    "trial": ["{h} hours of full access", "FamPay & Paytm", "All payment tools included", "One-time free trial"],
+    "fampay": ["FamPay configuration only", "Gmail App Password security", "Live payments & payment links", "API keys and webhooks"],
     "paytm": ["Paytm configuration only", "MID + UPI routing", "Live payments & payment links", "API keys and webhooks"],
-    "bharatpe": ["BharatPe configuration only", "Encrypted token & cookie", "Live payments & payment links", "API keys and webhooks"],
-    "bank": ["Daily settlement records", "Bank account, UPI ID or QR payout", "Admin payout within 24 hours", "1 AM-9 AM processing window"],
 }
-ALLG = "fampay,paytm,bharatpe"
+ALLG = "fampay,paytm"
 
 # ---------- plan catalogue ----------
 def seed_plans(db):
     """Creates the gateway plans once (prices are editable in Owner Panel -> Plans). Legacy plans are hidden, existing subscribers keep them until expiry."""
     seeds = [("trial", "12-Hour Free Trial", 100, 12, ALLG, {}, True, 0),
-             ("bank", "Bank Service", 0, 0, "bank", {30: 14900, 90: 44700, 180: 89400, 365: 149900}, False, 1),
-             ("fampay", "FamePay Only", 0, 0, "fampay", {30: 9900, 90: 29700, 180: 59400, 365: 99900}, True, 2),
-             ("paytm", "Paytm Only", 0, 0, "paytm", {30: 12900, 90: 38700, 180: 77400, 365: 149900}, True, 3),
-             ("bharatpe", "BharatPe Only", 0, 0, "bharatpe", {30: 16900, 90: 50700, 180: 101400, 365: 179900}, False, 4)]
+             ("fampay", "FamPay Only", 0, 0, "fampay", {30: 9900, 90: 29700, 180: 59400, 365: 99900}, True, 2),
+             ("paytm", "Paytm Only", 0, 0, "paytm", {30: 12900, 90: 38700, 180: 77400, 365: 149900}, True, 3)]
     for code, name, price, hours, g, prices, active, sort in seeds:
         if db.scalar(select(Plan).where(Plan.code == code)): continue
         p = db.scalar(select(Plan).where(Plan.name == name))
         if p: p.code = code; continue
         db.add(Plan(name=name, code=code, price=price, duration_days=0 if code == "trial" else 30, req_limit=10_000_000, txn_limit=1_000_000, max_keys=3, gateways=g,
                     support="Email", prices=json.dumps({str(k): v for k, v in prices.items()}), hours=hours, active=active, sort=sort))
+    for p in db.scalars(select(Plan).where(Plan.code.in_(REMOVED))).all():  # BharatPe / Bank are gone
+        used = db.scalar(select(Subscription.id).where(Subscription.plan_id == p.id).limit(1)) or db.scalar(select(SubOrder.id).where(SubOrder.plan_id == p.id).limit(1))
+        if used: p.active = False
+        else: db.delete(p)
+    for p in db.scalars(select(Plan)).all():  # tidy leftovers: spelling + removed gateways inside plan gateway lists
+        if p.name == "FamePay Only" and not db.scalar(select(Plan.id).where(Plan.name == "FamPay Only")): p.name = "FamPay Only"
+        g = ",".join(x for x in (p.gateways or "").split(",") if x.strip() and x.strip() not in REMOVED)
+        if g != (p.gateways or "") and p.code not in REMOVED: p.gateways = g
     free = db.scalar(select(Plan).where(Plan.name == "Free"))
     if free and not free.code: free.code, free.gateways = "free", ""  # no plan = no gateway
     for p in db.scalars(select(Plan).where(Plan.code == "")): p.active = False
     db.commit()
 
+def _safe_dec(c):
+    try: return sec.dec(c.data_enc)
+    except Exception: return {}
 def prices_of(p):
     try: return {int(k): int(v) for k, v in json.loads(p.prices or "{}").items() if int(v) > 0}
     except Exception: return {}
@@ -128,7 +137,7 @@ def _left(sub):
 def my_sub(request: Request, u=Depends(current), db=Depends(get_db)):
     cur, sub = plan_for(db, u.id); credit = credit_for(sub, cur); plans = {x.id: x for x in db.scalars(select(Plan))}
     cards = []
-    for p in db.scalars(select(Plan).where(Plan.active == True, Plan.code.notin_(("", "free"))).order_by(Plan.sort, Plan.id)).all():  # noqa
+    for p in db.scalars(select(Plan).where(Plan.active == True, Plan.code.notin_(HIDE)).order_by(Plan.sort, Plan.id)).all():  # noqa
         if p.code == "trial":
             cards.append(dict(p=p, trial=True, ok=(not u.trial_used and not sub), why="Free trial already used" if u.trial_used else ("Available only before your first plan" if sub else ""), feats=[f.format(h=p.hours or 12) for f in FEATURES["trial"]]))
             continue
@@ -144,7 +153,7 @@ def my_sub(request: Request, u=Depends(current), db=Depends(get_db)):
         if t and t.status == "PENDING" and t.expires_at > now(): pend = t
     last = None if sub else db.scalar(select(Subscription).where(Subscription.user_id == u.id, Subscription.status == "expired").order_by(Subscription.id.desc()))
     hist = db.scalars(select(Subscription).where(Subscription.user_id == u.id).order_by(Subscription.id.desc()).limit(30)).all()
-    desc = (", ".join(LABEL.get(g, g) for g in cur.gateways.split(",") if g and g != "bank") + " unlocked.") if sub else ""
+    desc = (", ".join(LABEL.get(g, g) for g in cur.gateways.split(",") if g and g not in REMOVED) + " unlocked.") if sub else ""
     return render(request, "subscription.html", u, plan=cur, sub=sub, credit=credit, cards=cards, pend=pend, last=last, hist=hist, plans=plans, left=_left(sub), desc=desc, owner=(u.role == "owner"))
 @router.post("/subscription/buy")
 def buy(request: Request, plan_id: int = Form(), days: int = Form(0), csrf: str = Form(""), u=Depends(current), db=Depends(get_db)):
@@ -152,7 +161,7 @@ def buy(request: Request, plan_id: int = Form(), days: int = Form(0), csrf: str 
     if u.role == "owner": flash(request, "The owner account has full access. Use Owner Panel to assign plans.", "err"); return go("/subscription")
     if not sec.rate_ok(f"buy:{u.id}", 10, 300): flash(request, "Too many attempts. Wait a few minutes.", "err"); return go("/subscription")
     p = db.get(Plan, plan_id)
-    if not p or not p.active or p.code in ("", "free"): flash(request, "This plan is not available.", "err"); return go("/subscription")
+    if not p or not p.active or p.code in HIDE: flash(request, "This plan is not available.", "err"); return go("/subscription")
     cur, sub = plan_for(db, u.id)
     if p.code == "trial":
         if u.trial_used or sub: flash(request, "The free trial is one-time and only for accounts without a plan.", "err"); return go("/subscription")
@@ -193,10 +202,10 @@ def plan_map(db, ids):
     return out
 @router.get("/admin/subscriptions")
 def admin_subs(request: Request, u=Depends(owner_only), db=Depends(get_db)):
-    plans = db.scalars(select(Plan).where(Plan.code.notin_(("", "free"))).order_by(Plan.sort, Plan.id)).all()
+    plans = db.scalars(select(Plan).where(Plan.code.notin_(HIDE)).order_by(Plan.sort, Plan.id)).all()
     pm = {p.id: p for p in db.scalars(select(Plan))}; names = {x.id: (x.business_name or x.name) for x in db.scalars(select(User))}
     ocreds = {c.gateway: c for c in db.scalars(select(GatewayCred).where(GatewayCred.user_id == u.id))}
-    return render(request, "admin_subs.html", u, plans=plans, pm=pm, pr={p.id: prices_of(p) for p in plans}, tenures=TENURES, names=names, ocreds=ocreds, label=LABEL,
+    return render(request, "admin_subs.html", u, plans=plans, pm=pm, pr={p.id: prices_of(p) for p in plans}, tenures=TENURES, names=names, ocreds=ocreds, label=LABEL, ocfg={g: _safe_dec(c) for g, c in ocreds.items()},
                   users=db.scalars(select(User).where(User.role != "owner").order_by(User.id.desc()).limit(300)).all(),
                   subs=db.scalars(select(Subscription).order_by(Subscription.id.desc()).limit(50)).all(),
                   orders=db.scalars(select(SubOrder).order_by(SubOrder.id.desc()).limit(50)).all(),
@@ -207,12 +216,44 @@ def admin_collect(request: Request, gateway: str = Form("auto"), csrf: str = For
     if gateway not in ("auto", "fampay", "paytm"): gateway = "auto"
     set_setting(db, "collect_gateway", gateway); audit(db, u.id, "collect_gateway", gateway); db.commit()
     flash(request, "Plan payments will be collected on " + ("your first enabled gateway." if gateway == "auto" else LABEL[gateway] + ".")); return go("/admin/subscriptions")
+# ---------- owner: QR collection setup for plan payments (shop name + UPI ID + Gmail + app password / MID) ----------
+@router.post("/admin/collect/{g}/save")
+def collect_save(g: str, request: Request, shop: str = Form(""), upi: str = Form(""), gmail: str = Form(""), app_password: str = Form(""), mid: str = Form(""),
+                 csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
+    check_csrf(request, csrf)
+    if g not in LABEL: raise HTTPException(404)
+    shop, upi, gmail, mid = shop.strip()[:60], upi.strip(), gmail.strip(), mid.strip()
+    c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == g))
+    old = sec.dec(c.data_enc) if c else {}
+    if g == "fampay":
+        pw = app_password.replace(" ", "").strip() or old.get("app_password", "")
+        if not shop or "@" not in upi or "@" not in gmail or not pw: flash(request, "Shop name, UPI ID, Gmail and the 16-digit app password are required.", "err"); return go("/admin/subscriptions")
+        data = sec.enc({"shop": shop, "upi": upi, "gmail": gmail, "app_password": pw})
+    else:
+        if not shop or "@" not in upi or not mid: flash(request, "Shop name, UPI ID and MID are required.", "err"); return go("/admin/subscriptions")
+        data = sec.enc({"shop": shop, "upi": upi, "mid": mid, "key": old.get("key", "")})
+    if c: c.data_enc, c.enabled = data, True
+    else: db.add(GatewayCred(user_id=u.id, gateway=g, data_enc=data, env="production", enabled=True))
+    set_setting(db, "collect_gateway", g); audit(db, u.id, "collect_save", g); db.commit()
+    flash(request, f"{LABEL[g]} saved. Plan payments now go to this account. Press the ₹1 test to confirm it works."); return go("/admin/subscriptions")
+@router.post("/admin/collect/{g}/{action}")
+def collect_action(g: str, action: str, request: Request, csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
+    check_csrf(request, csrf)
+    c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == g)) if g in LABEL else None
+    if not c: flash(request, "Save the setup first.", "err"); return go("/admin/subscriptions")
+    if action == "test":
+        try: ok, msg = gw.get(g).test(sec.dec(c.data_enc), c.env)
+        except Exception as e: ok, msg = False, str(e)[:200]
+        c.last_test_at, c.last_test_ok, c.last_test_msg = now(), ok, msg; flash(request, msg, "ok" if ok else "err")
+    elif action in ("enable", "disable"): c.enabled = action == "enable"; flash(request, f"{LABEL[g]} {action}d.")
+    elif action == "delete": db.delete(c); flash(request, f"{LABEL[g]} setup deleted.")
+    db.commit(); return go("/admin/subscriptions")
 @router.post("/admin/plans/{pid}")
 def plan_edit(pid: int, request: Request, name: str = Form(""), active: str = Form(""), gateways: str = Form(""), p30: str = Form(""), p90: str = Form(""), p180: str = Form(""), p365: str = Form(""),
               price: str = Form(""), hours: int = Form(12), txn_limit: int = Form(1000000), max_keys_: int = Form(3, alias="max_keys"), support: str = Form(""),
               csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
     check_csrf(request, csrf); p = db.get(Plan, pid)
-    if not p or p.code in ("", "free"): raise HTTPException(404)
+    if not p or p.code in HIDE: raise HTTPException(404)
     name = name.strip()[:40] or p.name
     if db.scalar(select(Plan.id).where(Plan.name == name, Plan.id != pid)): flash(request, "Another plan already uses that name.", "err"); return go("/admin/subscriptions")
     p.name, p.active = name, bool(active)
@@ -255,7 +296,7 @@ def msg_user(uid: int, request: Request, message: str = Form(""), csrf: str = Fo
     return go(f"/admin/users/{uid}")
 
 # ---------- owner: broadcast ----------
-AUDIENCES = [("all", "Everyone"), ("paid", "Paid plan users"), ("trial", "Trial users"), ("free", "No active plan / expired"), ("fampay", "FamePay plan users"), ("paytm", "Paytm plan users")]
+AUDIENCES = [("all", "Everyone"), ("paid", "Paid plan users"), ("trial", "Trial users"), ("free", "No active plan / expired"), ("fampay", "FamPay plan users"), ("paytm", "Paytm plan users")]
 def audience_ids(db, aud):
     users = db.scalars(select(User).where(User.role != "owner", User.status == "active")).all()
     if aud == "all": return [x.id for x in users]

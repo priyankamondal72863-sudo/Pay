@@ -6,9 +6,9 @@
 <div class="stat"><div class="sh"><small>SUCCESSFUL</small><i>✓</i></div><div class="big">{{s.ok}}</div><em class="ok">{{s.rate}}% success rate</em></div>
 <div class="stat"><div class="sh"><small>PENDING / FAILED</small><i>!</i></div><div class="big">{{s.pending}} / {{s.failed}}</div><em class="mut">Requires attention</em></div>
 </div>
-<div class="card hl bank"><small class="eyebrow">BANK SERVICE</small><h2>{{s.pend_amt|rs}} pending settlement</h2>
+<div class="card hl bank"><small class="eyebrow">PENDING PAYMENTS</small><h2>{{s.pend_amt|rs}} pending</h2>
 <p class="mut">Payments stay pending until the customer completes the payment and the gateway confirms it.</p>
-<a class="btn wide" href="/transactions?status=PENDING">View settlements</a></div>
+<a class="btn wide" href="/transactions?status=PENDING">View pending payments</a></div>
 <div class="card"><div class="ch"><div><h3>Payment volume</h3><p class="mut">Successful collections over the last 7 days</p></div><a href="/transactions?status=SUCCESS"><b>View report</b></a></div>
 <div class="chart">{% for d,v in days %}<div class="col"><div class="bw"><div class="b" title="{{v|rs}}" style="height:{{ (v*100/maxd)|round(0)|int if v else 3 }}%"></div></div><span>{{d}}</span></div>{% endfor %}</div></div>
 <div class="card rt"><div class="ch"><div><h3>Recent transactions</h3><p class="mut">Latest payment activity</p></div><a href="/transactions"><b>View all</b></a></div>

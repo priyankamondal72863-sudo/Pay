@@ -102,7 +102,7 @@ def optional_user(request: Request, db: Session = Depends(get_db)):
 
 # ---------- public + auth ----------
 @app.get("/")
-def home(request: Request, u=Depends(optional_user)): return render(request, "home.html", u)
+def home(request: Request, u=Depends(optional_user)): return go("/dashboard" if u else "/login")  # no landing page: straight to sign in / create account
 @app.get("/login")
 def login_page(request: Request): return render(request, "login.html")
 @app.post("/login")

@@ -85,7 +85,7 @@ class Plan(Base):
     max_keys: Mapped[int] = mapped_column(Integer, default=1)
     gateways: Mapped[str] = mapped_column(String(100), default="paytm")
     support: Mapped[str] = mapped_column(String(40), default="Community")
-    code: Mapped[str] = mapped_column(String(20), default="")  # free|trial|fampay|paytm|bharatpe|bank
+    code: Mapped[str] = mapped_column(String(20), default="")  # free|trial|fampay|paytm
     prices: Mapped[str] = mapped_column(Text, default="")  # JSON {"30": paise, "90": paise, ...}
     hours: Mapped[int] = mapped_column(Integer, default=0)  # trial length in hours
     active: Mapped[bool] = mapped_column(Boolean, default=True)

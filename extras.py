@@ -215,10 +215,7 @@ def api_wh_test(u=Depends(api_user), db=Depends(get_db)):
 
 # ---------- settings ----------
 @router.get("/settings")
-def settings(request: Request, u=Depends(current), db=Depends(get_db)):
-    s = db.get(UserSettings, u.id) or UserSettings(user_id=u.id)
-    ns = db.scalars(select(Notification).where(Notification.user_id == u.id).order_by(Notification.id.desc()).limit(15)).all()
-    return render(request, "settings.html", u, s=s, ns=ns, tg=bool(os.getenv("TELEGRAM_BOT_TOKEN")), mail=bool(os.getenv("SMTP_HOST")))
+def settings(request: Request, u=Depends(current)): return go("/notifications")  # settings page removed from the app
 @router.post("/settings")
 def settings_save(request: Request, telegram_chat_id: str = Form(""), notify_email: str = Form(""), notify_telegram: str = Form(""), csrf: str = Form(""), u=Depends(current), db=Depends(get_db)):
     check_csrf(request, csrf); cid = telegram_chat_id.strip()
