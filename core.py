@@ -8,15 +8,16 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 import segno
 from db import Base, engine, SessionLocal, get_db
-from models import User, GatewayCred, ApiKey, Txn, AuditLog, Subscription, LoginLog, now
+from models import User, GatewayCred, ApiKey, Txn, AuditLog, Subscription, LoginLog, Setting, now
 import security as sec
 import providers as gw
+import time as _time
 
 app = FastAPI(title="Zyvo Gateway")
 app.add_middleware(SessionMiddleware, secret_key=sec.SECRET, https_only=bool(os.getenv("RENDER")), same_site="lax", max_age=86400 * 7)
 _HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIRS = [os.path.join(_HERE, "templates"), _HERE]  # works with a templates/ folder OR html files placed next to main.py
-_NEED = ["base", "home", "login", "register", "dashboard", "transactions", "gateways", "keys", "docs", "checkout", "admin", "forgot", "reset", "webhooks", "settings", "subscription", "receipt", "admin_subs", "team", "admin_user"]
+_NEED = ["base", "newpayment", "home", "login", "register", "dashboard", "transactions", "gateways", "keys", "docs", "checkout", "admin", "forgot", "reset", "webhooks", "settings", "subscription", "receipt", "admin_subs", "team", "admin_user"]
 _missing = [n + ".html" for n in _NEED if not any(os.path.exists(os.path.join(d, n + ".html")) for d in TEMPLATE_DIRS)]
 if _missing: raise ImportError("Missing template files (upload them to GitHub): " + ", ".join(_missing))
 templates = Jinja2Templates(directory=TEMPLATE_DIRS)
@@ -24,6 +25,11 @@ templates.env.filters["rs"] = lambda p: f"₹{(p or 0)/100:,.2f}"
 
 def _startup_inner():
     Base.metadata.create_all(engine)
+    try:  # add key_enc column to an existing api_keys table (create_all does not alter tables)
+        from sqlalchemy import inspect, text
+        if "key_enc" not in [c["name"] for c in inspect(engine).get_columns("api_keys")]:
+            with engine.begin() as cn: cn.execute(text("ALTER TABLE api_keys ADD COLUMN key_enc TEXT DEFAULT ''"))
+    except Exception as e: print("migration error", e)
     em, pw = (os.getenv("ADMIN_EMAIL") or "admin@rgcheat.local"), (os.getenv("ADMIN_PASSWORD") or "909090")
     un = (os.getenv("ADMIN_USERNAME") or "RGCHEAT").lower()  # default admin login: RGCHEAT / 909090 (override with ADMIN_USERNAME / ADMIN_PASSWORD env vars)
     if pw:  # env is the source of truth for the owner login: created on first boot, updated if you change the env vars
@@ -39,11 +45,30 @@ def _startup_inner():
     start()
 
 # ---------- helpers ----------
-def base_url(request): return os.getenv("RENDER_EXTERNAL_URL") or str(request.base_url).rstrip("/")
+_SET = {}  # tiny per-process cache (30s) so an admin change reaches every gunicorn worker quickly
+def get_setting(key, default=""):
+    c = _SET.get(key)
+    if c and _time.time() - c[1] < 30: return c[0] or default
+    try:
+        with SessionLocal() as d: r = d.get(Setting, key); v = r.value if r else ""
+    except Exception: return default
+    _SET[key] = (v, _time.time()); return v or default
+def set_setting(db, key, value):
+    r = db.get(Setting, key)
+    if r: r.value = value
+    else: db.add(Setting(key=key, value=value))
+    db.commit(); _SET.pop(key, None)
+def base_url(request): return get_setting("base_url").strip().rstrip("/") or os.getenv("RENDER_EXTERNAL_URL") or str(request.base_url).rstrip("/")
 def render(request, name, user=None, **ctx):
     s = request.session
     if "csrf" not in s: s["csrf"] = secrets.token_hex(16)
-    ctx.update(request=request, user=user, csrf=s["csrf"], flash=s.pop("flash", None), base=base_url(request))
+    bell = 0
+    if user:
+        try:
+            from models import Notification
+            with SessionLocal() as _d: bell = _d.scalar(select(func.count()).where(Notification.user_id == user.id, Notification.created >= now() - timedelta(days=1))) or 0
+        except Exception: bell = 0
+    ctx.update(request=request, user=user, csrf=s["csrf"], flash=s.pop("flash", None), base=base_url(request), bell=bell)
     return templates.TemplateResponse(request, name, ctx)
 def flash(request, msg, kind="ok"): request.session["flash"] = {"m": msg, "k": kind}
 def go(url): return RedirectResponse(url, status_code=303)
@@ -103,9 +128,32 @@ def logout(request: Request, csrf: str = Form("")):
 @app.get("/docs-api.txt")  # downloadable plain-text docs (AI-ready)
 def docs_txt(request: Request):
     body = templates.get_template("docs_api.txt").render(base=base_url(request))
-    return Response(body, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="payment-gateway-api-docs.txt"'})
+    return Response(body, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="zyvopay-api-docs.txt"'})
+@app.get("/openapi.yaml")
+def openapi_yaml(request: Request):
+    body = templates.get_template("openapi.yaml").render(base=base_url(request))
+    return Response(body, media_type="application/yaml; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="zyvopay-openapi.yaml"'})
+@app.get("/downloads/zyvopay_telegram_bot.py")
+def dl_tgbot(request: Request):
+    body = templates.get_template("zyvopay_telegram_bot.py").render(base=base_url(request))
+    return Response(body, media_type="text/x-python; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="zyvopay_telegram_bot.py"'})
+@app.get("/docs-api/prompt")
+def docs_prompt(request: Request, lang: str = "JavaScript", target: str = "website_existing", gateway: str = "", details: str = ""):
+    from docs_gen import build_prompt
+    return Response(build_prompt(base_url(request), lang, target, gateway, details), media_type="text/plain; charset=utf-8")
 @app.get("/docs-api")
-def docs(request: Request, u=Depends(optional_user)): return render(request, "docs.html", u)
+def docs(request: Request, u=Depends(optional_user)):
+    from docs_gen import LANGS, TARGETS
+    return render(request, "docs.html", u, langs=LANGS, targets=TARGETS)
+@app.get("/docs.php")
+def docs_php(): return go("/docs-api")
+@app.post("/admin/settings")
+def admin_settings(request: Request, base_url_: str = Form("", alias="base_url"), csrf: str = Form(""), u=Depends(owner_only), db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    v = base_url_.strip().rstrip("/")
+    if v and not (v.startswith("https://") or v.startswith("http://")): flash(request, "Public URL must start with https://", "err"); return go("/admin")
+    set_setting(db, "base_url", v); audit(db, u.id, "setting_base_url", v); db.commit()
+    flash(request, "Public base URL saved." if v else "Public base URL cleared (automatic detection)."); return go("/admin")
 
 # ---------- dashboard ----------
 @app.get("/dashboard")
@@ -121,19 +169,32 @@ def dashboard(request: Request, u=Depends(current), db: Session = Depends(get_db
     days = []
     for i in range(6, -1, -1):
         d0 = today - timedelta(days=i); d1 = d0 + timedelta(days=1)
-        days.append((d0.strftime("%d %b"), db.scalar(select(func.coalesce(func.sum(Txn.amount), 0)).where(Txn.user_id == u.id, Txn.status == "SUCCESS", Txn.created >= d0, Txn.created < d1))))
-    recent = db.scalars(select(Txn).where(Txn.user_id == u.id).order_by(Txn.id.desc()).limit(8)).all()
-    s = dict(total=total, ok=ok, failed=by.get("FAILED", 0), pending=by.get("PENDING", 0) + by.get("CREATED", 0), vol=vol, t_all=t_all, t_ok=t_ok, t_vol=t_vol,
+        days.append((d0.strftime("%a"), db.scalar(select(func.coalesce(func.sum(Txn.amount), 0)).where(Txn.user_id == u.id, Txn.status == "SUCCESS", Txn.created >= d0, Txn.created < d1))))
+    recent = db.scalars(select(Txn).where(Txn.user_id == u.id).order_by(Txn.id.desc()).limit(5)).all()
+    pend_amt = db.scalar(select(func.coalesce(func.sum(Txn.amount), 0)).where(Txn.user_id == u.id, Txn.status.in_(["PENDING", "CREATED"])))
+    bad = by.get("FAILED", 0) + by.get("EXPIRED", 0)
+    s = dict(total=total, ok=ok, failed=bad, pending=by.get("PENDING", 0) + by.get("CREATED", 0), vol=vol, t_all=t_all, t_ok=t_ok, t_vol=t_vol, pend_amt=pend_amt,
              rate=round(ok * 100 / total, 1) if total else 0, avg=int(vol / ok) if ok else 0)
     return render(request, "dashboard.html", u, s=s, gwise=gwise, days=days, maxd=max([d[1] for d in days] + [1]), recent=recent)
 
 @app.get("/transactions")
 def transactions(request: Request, status: str = "", gateway: str = "", search: str = "", u=Depends(current), db: Session = Depends(get_db)):
     q = select(Txn).where(Txn.user_id == u.id)
+    search = search.strip()
     if status: q = q.where(Txn.status == status)
     if gateway: q = q.where(Txn.gateway == gateway)
-    if search: q = q.where(Txn.pay_id.contains(search) | Txn.merchant_order_id.contains(search) | Txn.provider_ref.contains(search))
+    if search: q = q.where(Txn.pay_id.icontains(search) | Txn.merchant_order_id.icontains(search) | Txn.provider_ref.icontains(search) | Txn.customer.icontains(search))
     return render(request, "transactions.html", u, rows=db.scalars(q.order_by(Txn.id.desc()).limit(200)).all(), f=dict(status=status, gateway=gateway, search=search))
+@app.get("/transactions/new")
+def txn_new(request: Request, u=Depends(current), db: Session = Depends(get_db)):
+    gws = [g for g in ("paytm", "fampay") if cfg_for(db, u.id, g)[0]]
+    return render(request, "newpayment.html", u, gws=gws)
+@app.post("/transactions/new")
+def txn_new_post(request: Request, amount: float = Form(), order_id: str = Form(""), gateway: str = Form(""), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    try: t = create_payment(db, u, round(amount * 100), pick_gateway(db, u, gateway), order_id.strip()[:64] or None, None)
+    except HTTPException as e: flash(request, str(e.detail), "err"); return go("/transactions/new")
+    return go(f"/pay/{t.pay_id}")
 
 # ---------- gateways ----------
 @app.get("/gateways")
@@ -210,20 +271,39 @@ def fampay_action(action: str, request: Request, csrf: str = Form(""), u=Depends
 # ---------- api keys ----------
 @app.get("/keys")
 def keys(request: Request, u=Depends(current), db: Session = Depends(get_db)):
-    return render(request, "keys.html", u, keys=db.scalars(select(ApiKey).where(ApiKey.user_id == u.id).order_by(ApiKey.id.desc())).all(), newkey=request.session.pop("newkey", None))
+    from extras import plan_for
+    rows = db.scalars(select(ApiKey).where(ApiKey.user_id == u.id).order_by(ApiKey.id.desc())).all()
+    plan, sub = plan_for(db, u.id)
+    return render(request, "keys.html", u, keys=rows, active=next((k for k in rows if not k.revoked), None), plan=plan, sub=sub)
 @app.post("/keys/create")
 def key_create(request: Request, label: str = Form(""), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
-    from extras import max_keys
-    if db.scalar(select(func.count()).where(ApiKey.user_id == u.id, ApiKey.revoked == False)) >= max_keys(db, u.id):  # noqa
-        flash(request, "Key limit reached for your plan.", "err"); return go("/keys")
-    k = sec.new_api_key(); db.add(ApiKey(user_id=u.id, label=label[:60], prefix=k[:9], key_hash=sec.hash_key(k)))
-    audit(db, u.id, "key_create"); db.commit(); request.session["newkey"] = k; return go("/keys")
+    label = label.strip()[:60]
+    if not label: flash(request, "Enter your shop name first.", "err"); return go("/keys")
+    if db.scalar(select(func.count()).where(ApiKey.user_id == u.id, ApiKey.revoked == False)):  # noqa
+        flash(request, "Revoke or delete your current active key before generating another.", "err"); return go("/keys")
+    k = sec.new_api_key()
+    db.add(ApiKey(user_id=u.id, label=label, prefix=k[:9], key_hash=sec.hash_key(k), key_enc=sec.enc({"k": k})))
+    audit(db, u.id, "key_create"); db.commit(); flash(request, "Live API key generated."); return go("/keys")
+@app.post("/keys/{kid}/reveal")  # used by Show / Copy buttons (fetch)
+def key_reveal(kid: int, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    k = db.get(ApiKey, kid)
+    if not k or k.user_id != u.id or k.revoked: raise HTTPException(404, "Key not found")
+    if not k.key_enc: raise HTTPException(409, "This older key cannot be shown. Delete it and generate a new one.")
+    try: return {"key": sec.dec(k.key_enc)["k"]}
+    except Exception: raise HTTPException(500, "Could not decrypt key (SECRET_KEY changed?)")
 @app.post("/keys/{kid}/revoke")
 def key_revoke(kid: int, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
     k = db.get(ApiKey, kid)
-    if k and k.user_id == u.id: k.revoked = True; audit(db, u.id, "key_revoke", str(kid)); db.commit()
+    if k and k.user_id == u.id: k.revoked = True; k.key_enc = ""; audit(db, u.id, "key_revoke", str(kid)); db.commit(); flash(request, "Key revoked.")
+    return go("/keys")
+@app.post("/keys/{kid}/delete")
+def key_delete(kid: int, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    k = db.get(ApiKey, kid)
+    if k and k.user_id == u.id: db.delete(k); audit(db, u.id, "key_delete", str(kid)); db.commit(); flash(request, "Key deleted permanently.")
     return go("/keys")
 
 # ---------- payment core ----------
@@ -402,7 +482,7 @@ def admin(request: Request, q: str = "", u=Depends(owner_only), db: Session = De
     users = db.scalars(uq.limit(300)).all()
     names = {x.id: x.username for x in db.scalars(select(User)).all()}
     recent = db.scalars(select(Txn).order_by(Txn.id.desc()).limit(50)).all()
-    return render(request, "admin.html", u, st=st, users=users, ustats=_user_stats(db), q=q, names=names, recent=recent,
+    return render(request, "admin.html", u, st=st, users=users, ustats=_user_stats(db), q=q, names=names, recent=recent, bset=get_setting("base_url"), bauto=base_url(request),
                   logs=db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(30)).all())
 @app.get("/admin/users/{uid}")
 def admin_user(uid: int, request: Request, status: str = "", u=Depends(owner_only), db: Session = Depends(get_db)):

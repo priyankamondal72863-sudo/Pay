@@ -1,8 +1,16 @@
 {% extends "base.html" %}{% block c %}
-<style>.g4{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.g4 .stat{padding:20px;min-height:150px;display:flex;flex-direction:column;justify-content:space-between}.g4 .stat small{font-weight:700;letter-spacing:.06em;font-size:13px}.g4 .stat .big{font-size:32px!important;font-weight:800;margin:10px 0 6px}.g4 .stat em{font-style:normal;font-size:14px}.ok{color:var(--ok)}.mut{color:var(--mut)}@media(min-width:900px){.g4{grid-template-columns:repeat(4,1fr)}}</style>
 <div class="g4">
-<div class="stat"><small>SUCCESSFUL VOLUME</small><div class="big">{{s.vol|rs}}</div><em class="ok">Verified payments</em></div>
-<div class="stat"><small>TOTAL PAYMENTS</small><div class="big">{{s.total}}</div><em class="ok">{{s.vol|rs}} processed</em></div>
-<div class="stat"><small>SUCCESSFUL</small><div class="big">{{s.ok}}</div><em class="ok">{{s.rate}}% success rate</em></div>
-<div class="stat"><small>PENDING / FAILED</small><div class="big">{{s.pending}} / {{s.failed}}</div><em class="mut">Requires attention</em></div>
-</div>{% endblock %}
+<div class="stat top1"><div class="sh"><small>SUCCESSFUL VOLUME</small><i>₹</i></div><div class="big">{{s.vol|rs}}</div><em class="ok">Verified payments</em></div>
+<div class="stat"><div class="sh"><small>TOTAL PAYMENTS</small><i>⇄</i></div><div class="big">{{s.total}}</div><em class="ok">{{s.vol|rs}} processed</em></div>
+<div class="stat"><div class="sh"><small>SUCCESSFUL</small><i>✓</i></div><div class="big">{{s.ok}}</div><em class="ok">{{s.rate}}% success rate</em></div>
+<div class="stat"><div class="sh"><small>PENDING / FAILED</small><i>!</i></div><div class="big">{{s.pending}} / {{s.failed}}</div><em class="mut">Requires attention</em></div>
+</div>
+<div class="card hl bank"><small class="eyebrow">BANK SERVICE</small><h2>{{s.pend_amt|rs}} pending settlement</h2>
+<p class="mut">Payments stay pending until the customer completes the payment and the gateway confirms it.</p>
+<a class="btn wide" href="/transactions?status=PENDING">View settlements</a></div>
+<div class="card"><div class="ch"><div><h3>Payment volume</h3><p class="mut">Successful collections over the last 7 days</p></div><a href="/transactions?status=SUCCESS"><b>View report</b></a></div>
+<div class="chart">{% for d,v in days %}<div class="col"><div class="bw"><div class="b" title="{{v|rs}}" style="height:{{ (v*100/maxd)|round(0)|int if v else 3 }}%"></div></div><span>{{d}}</span></div>{% endfor %}</div></div>
+<div class="card rt"><div class="ch"><div><h3>Recent transactions</h3><p class="mut">Latest payment activity</p></div><a href="/transactions"><b>View all</b></a></div>
+{% for t in recent %}<div class="tr"><div class="l"><div class="oid">{{t.pay_id}}</div><div class="sub">{{t.merchant_order_id or '—'}}</div><div class="sub">{{t.created.strftime('%d %b, %H:%M')}}</div></div>
+<div class="r"><div class="amt">{{t.amount|rs}}</div><span class="pill {{t.status}}">{{t.status|replace('_',' ')|capitalize}}</span></div></div>
+{% else %}<p class="mut">No payments yet.</p>{% endfor %}</div>{% endblock %}

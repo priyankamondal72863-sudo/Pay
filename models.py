@@ -34,6 +34,7 @@ class ApiKey(Base):
     label: Mapped[str] = mapped_column(String(60), default="")
     prefix: Mapped[str] = mapped_column(String(16))
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    key_enc: Mapped[str] = mapped_column(Text, default="")
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     uses: Mapped[int] = mapped_column(Integer, default=0)
     last_used: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -136,3 +137,8 @@ class LoginLog(Base):
     ip: Mapped[str] = mapped_column(String(60))
     ok: Mapped[bool] = mapped_column(Boolean)
     created: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+class Setting(Base):
+    __tablename__ = "site_settings"
+    key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")

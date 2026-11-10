@@ -20,3 +20,8 @@ The service pings its own /healthz every 5 min (uses RENDER_EXTERNAL_URL, set by
 - FamPay: Gateways -> FamPay (Shop name, UPI ID, Gmail, 16-digit App Password) -> Test Gmail -> Enable. Gmail needs 2-step verification + IMAP on.
 - API: /api/create_order.php?amount=99&api_key=KEY , /api/verify.php?order_id=ORD..&api_key=KEY , /checkout.php?amount=99&api_key=KEY
 - FamPay orders get a unique paise amount (+0..+99 paise) so each payment can be matched to its order.
+
+## Part 4 (docs + theme)
+- Docs page (/docs-api) now has 3 tabs: Getting started, Overview, AI integration prompt. Downloads: /openapi.yaml, /downloads/zyvopay_telegram_bot.py, /docs-api.txt, and the prompt as .txt for the chosen language/target.
+- Owner Panel -> "Public base URL": set your public Render link or domain; it is used in docs, OpenAPI, bot file and prompts (empty = automatic).
+- Pink/white theme everywhere; dark mode is plum/pink.

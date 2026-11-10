@@ -2,6 +2,8 @@
 <div class="stat"><small>Users</small><div>{{st.users}}</div></div><div class="stat"><small>Active</small><div>{{st.active}}</div></div>
 <div class="stat"><small>Transactions</small><div>{{st.txns}}</div></div><div class="stat"><small>Successful</small><div>{{st.ok}}</div></div>
 <div class="stat"><small>Failed</small><div>{{st.failed}}</div></div><div class="stat"><small>Total successful balance</small><div>{{st.vol|rs}}</div></div><div class="stat"><small>Subscription revenue</small><div>{{st.rev|rs}}</div></div></div>
+<div class="card"><h3>Public base URL</h3><p class="mut" style="margin:0 0 8px">The public address of this site (for example your Render link or custom domain). It is shown in the API docs, OpenAPI file, bot download and AI prompts. Leave empty to detect it automatically (now: <b>{{bauto}}</b>).</p>
+<form method="post" action="/admin/settings" class="row"><input type="hidden" name="csrf" value="{{csrf}}"><input name="base_url" value="{{bset}}" placeholder="https://your-site.onrender.com" style="flex:1;margin:0;min-width:220px"><button>Save</button></form></div>
 <div class="row" style="margin-bottom:14px"><a class="btn" href="/admin/subscriptions">Plans &amp; subscriptions</a><a class="btn btn2" href="/team">Sellers &amp; resellers</a></div>
 <div class="card wrap"><h3>Users &amp; balances</h3>
 <form method="get" class="row" style="margin-bottom:10px"><input name="q" value="{{q}}" placeholder="Search name / username / email / phone" style="margin:0;flex:1;min-width:200px"><button>Search</button></form>
