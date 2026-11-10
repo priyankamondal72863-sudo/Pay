@@ -43,7 +43,7 @@ def base_url(request): return os.getenv("RENDER_EXTERNAL_URL") or str(request.ba
 def render(request, name, user=None, **ctx):
     s = request.session
     if "csrf" not in s: s["csrf"] = secrets.token_hex(16)
-    ctx.update(user=user, csrf=s["csrf"], flash=s.pop("flash", None), base=base_url(request))
+    ctx.update(request=request, user=user, csrf=s["csrf"], flash=s.pop("flash", None), base=base_url(request))
     return templates.TemplateResponse(request, name, ctx)
 def flash(request, msg, kind="ok"): request.session["flash"] = {"m": msg, "k": kind}
 def go(url): return RedirectResponse(url, status_code=303)
@@ -141,18 +141,15 @@ def gateways(request: Request, u=Depends(current), db: Session = Depends(get_db)
         except Exception: pcfg = {}
     return render(request, "gateways.html", u, creds=creds, adapters=gw.ADAPTERS, pcfg=pcfg)
 @app.post("/gateways/paytm/save")
-def paytm_save(request: Request, shop: str = Form(""), upi: str = Form(), mid: str = Form(), key: str = Form(""), env: str = Form("production"), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+def paytm_save(request: Request, shop: str = Form(""), upi: str = Form(), mid: str = Form(), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
-    if env not in ("staging", "production"): raise HTTPException(400)
     upi, mid = upi.strip(), mid.strip()
-    if "@" not in upi or not mid: flash(request, "Shop name, UPI ID and MID are required.", "err"); return go("/gateways")
+    if "@" not in upi or not mid: flash(request, "UPI ID and MID are required.", "err"); return go("/gateways")
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "paytm"))
-    old = sec.dec(c.data_enc) if c else {}
-    key = key.strip() or old.get("key", "")  # Merchant Key is optional
-    data = sec.enc({"shop": (shop.strip() or u.name)[:60], "upi": upi, "mid": mid, "key": key})
-    if c: c.data_enc, c.env = data, env
-    else: db.add(GatewayCred(user_id=u.id, gateway="paytm", data_enc=data, env=env))
-    audit(db, u.id, "gateway_save", "paytm"); db.commit(); flash(request, "Paytm setup saved (encrypted). Now press Rs 1 Test Payment."); return go("/gateways")
+    data = sec.enc({"shop": (shop.strip() or u.name)[:60], "upi": upi, "mid": mid, "key": ""})  # only Shop name + UPI ID + MID are needed
+    if c: c.data_enc, c.env = data, "production"
+    else: db.add(GatewayCred(user_id=u.id, gateway="paytm", data_enc=data, env="production", enabled=True))
+    audit(db, u.id, "gateway_save", "paytm"); db.commit(); flash(request, "Paytm setup saved. Press the Rs 1 test to confirm."); return go("/gateways")
 @app.post("/gateways/{gname}/testpay")
 def gateway_testpay(gname: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     """Creates a Rs 1 QR with the saved credentials (even if the gateway is not enabled yet). Pay it: SUCCESS = gateway works."""
@@ -162,7 +159,7 @@ def gateway_testpay(gname: str, request: Request, csrf: str = Form(""), u=Depend
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == gname))
     if not c: flash(request, "Save setup first.", "err"); return go("/gateways")
     if not sec.rate_ok(f"testpay:{u.id}", 10, 300): flash(request, "Too many tests. Wait a few minutes.", "err"); return go("/gateways")
-    pay_id = "ORD" + secrets.token_hex(8).upper(); amount = 100
+    pay_id = new_pay_id(db, gname); amount = 100
     if gname == "fampay":
         used = set(db.scalars(select(Txn.amount).where(Txn.user_id == u.id, Txn.gateway == "fampay", Txn.status == "PENDING", Txn.expires_at > now())))
         amount += next((a for a in range(0, 100) if amount + a not in used), 0)
@@ -226,9 +223,16 @@ def key_revoke(kid: int, request: Request, csrf: str = Form(""), u=Depends(curre
     return go("/keys")
 
 # ---------- payment core ----------
-def cfg_for(db, user_id, gateway):
-    c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == user_id, GatewayCred.gateway == gateway, GatewayCred.enabled == True))  # noqa
+def cfg_for(db, user_id, gateway, enabled_only=True):
+    q = select(GatewayCred).where(GatewayCred.user_id == user_id, GatewayCred.gateway == gateway)
+    if enabled_only: q = q.where(GatewayCred.enabled == True)  # noqa
+    c = db.scalar(q)
     return (sec.dec(c.data_enc), c.env) if c else (None, None)
+def new_pay_id(db, gateway):
+    for _ in range(20):
+        pid = gw.paytm.new_order_id() if gateway == "paytm" else "ORD" + secrets.token_hex(8).upper()
+        if not db.scalar(select(Txn.id).where(Txn.pay_id == pid)): return pid
+    return "ORD" + secrets.token_hex(8).upper()
 def create_payment(db, user, amount, gateway, merchant_order_id, customer):
     ad = gw.get(gateway)
     if not ad or not ad.AVAILABLE: raise HTTPException(400, f"Gateway '{gateway}' not available")
@@ -239,7 +243,7 @@ def create_payment(db, user, amount, gateway, merchant_order_id, customer):
     from extras import check_plan; check_plan(db, user, gateway)
     cfg, env = cfg_for(db, user.id, gateway)
     if not cfg: raise HTTPException(400, f"Gateway '{gateway}' not configured/enabled")
-    pay_id = "ORD" + secrets.token_hex(8).upper()
+    pay_id = new_pay_id(db, gateway)
     if gateway == "fampay":  # unique-paise adjustment (+1..+99 paise) so each pending order has its own exact amount
         used = set(db.scalars(select(Txn.amount).where(Txn.user_id == user.id, Txn.gateway == "fampay", Txn.status == "PENDING", Txn.expires_at > now())))
         adj = next((a for a in range(0, 100) if amount + a not in used), None)
@@ -253,7 +257,7 @@ def create_payment(db, user, amount, gateway, merchant_order_id, customer):
 def _refresh(db, t):
     """Only a provider-verified response (order id + amount + success) may set SUCCESS. Idempotent."""
     if t.status not in ("PENDING", "CREATED"): return t
-    cfg, env = cfg_for(db, t.user_id, t.gateway)
+    cfg, env = cfg_for(db, t.user_id, t.gateway, enabled_only=False)  # pending/test payments must verify even if the gateway is not enabled
     if cfg:
         try:
             r = gw.get(t.gateway).status(cfg, env, t.pay_id, amount=t.amount, since=t.created)

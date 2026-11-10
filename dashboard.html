@@ -1,12 +1,8 @@
-{% extends "base.html" %}{% block c %}<h2>Overview</h2><p style="color:var(--mut);margin-top:-8px">Your payment performance at a glance.</p>
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
-<div class="stat"><small>TOTAL PAYMENTS</small><div class="big">{{s.total}}</div></div><div class="stat"><small>SUCCESSFUL</small><div class="SUCCESS big">{{s.ok}}</div></div>
-<div class="stat"><small>FAILED</small><div class="FAILED big">{{s.failed}}</div></div><div class="stat"><small>Pending</small><div class="PENDING">{{s.pending}}</div></div>
-<div class="stat"><small>SUCCESSFUL VOLUME</small><div class="big">{{s.vol|rs}}</div></div><div class="stat"><small>Success rate</small><div>{{s.rate}}%</div></div>
-<div class="stat"><small>Avg amount</small><div>{{s.avg|rs}}</div></div><div class="stat"><small>Today txns</small><div>{{s.t_all}}</div></div>
-<div class="stat"><small>Today successful</small><div>{{s.t_ok}}</div></div><div class="stat"><small>Today volume</small><div>{{s.t_vol|rs}}</div></div></div>
-<div class="card"><h3>Last 7 days volume</h3>{% for d,v in days %}<div class="row" style="margin:6px 0"><span style="width:60px;color:var(--mut)">{{d}}</span><div style="flex:1"><div class="bar" style="width:{{(v*100/maxd)|int}}%;min-width:3px"></div></div><span>{{v|rs}}</span></div>{% endfor %}</div>
-<div class="card"><h3>By gateway</h3>{% for g,n,v in gwise %}<p>{{g}} — {{n}} paid · {{v|rs}}</p>{% else %}<p style="color:var(--mut)">No successful payments yet.</p>{% endfor %}</div>
-<div class="card"><h3>Recent</h3><div class="wrap"><table><tr><th>Order</th><th>Amount</th><th>Status</th><th>Date</th></tr>
-{% for t in recent %}<tr><td>{{t.merchant_order_id or t.pay_id}}</td><td>{{t.amount|rs}}</td><td class="{{t.status}}">{{t.status}}</td><td>{{t.created.strftime('%d %b %H:%M')}}</td></tr>
-{% else %}<tr><td colspan=4 style="color:var(--mut)">No transactions yet. Add a gateway and API key to begin.</td></tr>{% endfor %}</table></div></div>{% endblock %}
+{% extends "base.html" %}{% block c %}
+<style>.g4{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.g4 .stat{padding:20px;min-height:150px;display:flex;flex-direction:column;justify-content:space-between}.g4 .stat small{font-weight:700;letter-spacing:.06em;font-size:13px}.g4 .stat .big{font-size:32px!important;font-weight:800;margin:10px 0 6px}.g4 .stat em{font-style:normal;font-size:14px}.ok{color:var(--ok)}.mut{color:var(--mut)}@media(min-width:900px){.g4{grid-template-columns:repeat(4,1fr)}}</style>
+<div class="g4">
+<div class="stat"><small>SUCCESSFUL VOLUME</small><div class="big">{{s.vol|rs}}</div><em class="ok">Verified payments</em></div>
+<div class="stat"><small>TOTAL PAYMENTS</small><div class="big">{{s.total}}</div><em class="ok">{{s.vol|rs}} processed</em></div>
+<div class="stat"><small>SUCCESSFUL</small><div class="big">{{s.ok}}</div><em class="ok">{{s.rate}}% success rate</em></div>
+<div class="stat"><small>PENDING / FAILED</small><div class="big">{{s.pending}} / {{s.failed}}</div><em class="mut">Requires attention</em></div>
+</div>{% endblock %}

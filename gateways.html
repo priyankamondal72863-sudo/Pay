@@ -5,9 +5,7 @@
 <label>Payee Name / Shop Name</label><input name="shop" value="{{pc.get('shop','')}}" placeholder="Payment recipient or business name">
 <label>UPI ID</label><input name="upi" required value="{{pc.get('upi','')}}" placeholder="merchant@paytm">
 <label>MID</label><input name="mid" required value="{{pc.get('mid','')}}" placeholder="MERCHANT12345678">
-<details style="margin:8px 0"><summary style="color:var(--mut);cursor:pointer">Advanced (optional)</summary>
-<label>Merchant Key {% if pc.get('key') %}(saved - leave blank to keep){% endif %}</label><input type="password" name="key" autocomplete="off" placeholder="{{'•••• saved' if pc.get('key') else 'Only if you want the official signed status API'}}">
-<label>Environment</label><select name="env"><option value="production" {{'selected' if not c or c.env=='production'}}>Production</option><option value="staging" {{'selected' if c and c.env=='staging'}}>Staging</option></select></details>
+
 <button>Save Paytm setup</button></form><hr style="border-color:var(--line)">
 {% if c %}<p>Last test: {% if c.last_test_at %}<span class="{{'active' if c.last_test_ok else 'suspended'}}">{{c.last_test_msg}}</span> ({{c.last_test_at.strftime('%d %b %H:%M')}} UTC){% else %}never{% endif %}</p>
 <div class="row"><form method="post" action="/gateways/paytm/test"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">Check setup</button></form>

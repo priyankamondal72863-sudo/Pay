@@ -33,6 +33,11 @@ def _post(cfg, env, path, body, client_id=None):
     r.raise_for_status(); return r.json()
 def _has_key(cfg): return bool((cfg.get("key") or "").strip())
 
+def new_order_id():
+    """PTM + UTC timestamp + 4 digits (same shape the working Zyvo Pay site uses)."""
+    import datetime as _d
+    return "PTM" + _d.datetime.utcnow().strftime("%Y%m%d%H%M%S") + "".join(random.choice(string.digits) for _ in range(4))
+
 def create(cfg, env, pay_id, amount_paise):
     """Local UPI QR: no Paytm API call needed. The order id goes into tr/tn so Paytm can report the payment by order id."""
     shop = cfg.get("shop") or "Shop"
@@ -47,19 +52,28 @@ def _amt_paise(v):
 def _status_keyless(cfg, env, pay_id):
     """Merchant status lookup by MID + ORDERID only (no Merchant Key). Returns Paytm's raw JSON."""
     q = json.dumps({"MID": cfg["mid"], "ORDERID": pay_id}, separators=(",", ":"))
-    r = requests.get(HOSTS.get(env, HOSTS["production"]) + "/merchant-status/getTxnStatus", params={"JsonData": q}, timeout=20)
+    r = requests.get(HOSTS["production"] + "/merchant-status/getTxnStatus", params={"JsonData": q}, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
     r.raise_for_status(); return r.json()
 
+# Paytm replies TXN_FAILURE + these codes when the order simply does not exist (yet): the customer has not paid.
+# That is NOT a failed payment, so it must stay PENDING until Paytm reports a real transaction.
+_NOT_FOUND = {"334", "335", "400", "401", "402", "810", "501", "1"}
+def _state(st, code, has_txn):
+    if st == "TXN_SUCCESS": return "SUCCESS"
+    if st == "TXN_FAILURE" and has_txn and str(code) not in _NOT_FOUND: return "FAILED"
+    return "PENDING"
+
 def status(cfg, env, pay_id, **kw):
-    if _has_key(cfg):  # official signed API when a Merchant Key is saved
+    env = "production"
+    if _has_key(cfg):  # optional signed API (only if an old Merchant Key is still saved)
         res = _post(cfg, env, "/v3/order/status", {"mid": cfg["mid"], "orderId": pay_id})
-        b = res.get("body", {}); st = b.get("resultInfo", {}).get("resultStatus", "")
-        state = {"TXN_SUCCESS": "SUCCESS", "TXN_FAILURE": "FAILED"}.get(st, "PENDING")
+        b = res.get("body", {}); i = b.get("resultInfo", {})
+        state = _state(i.get("resultStatus", ""), i.get("resultCode", ""), bool(b.get("txnId")))
         return {"state": state, "order_id": b.get("orderId"), "amount": _amt_paise(b.get("txnAmount")), "txn_id": b.get("txnId", "")}
     b = _status_keyless(cfg, env, pay_id)
-    st = str(b.get("STATUS", ""))
-    state = {"TXN_SUCCESS": "SUCCESS", "TXN_FAILURE": "FAILED"}.get(st, "PENDING")
-    return {"state": state, "order_id": b.get("ORDERID"), "amount": _amt_paise(b.get("TXNAMOUNT")), "txn_id": str(b.get("BANKTXNID") or b.get("TXNID") or "")}
+    txn = str(b.get("BANKTXNID") or b.get("TXNID") or "")
+    state = _state(str(b.get("STATUS", "")), b.get("RESPCODE", ""), bool(txn))
+    return {"state": state, "order_id": b.get("ORDERID"), "amount": _amt_paise(b.get("TXNAMOUNT")), "txn_id": txn}
 
 def test(cfg, env):
     """Setup check only (does not prove payments work - use the Rs 1 test payment for that)."""

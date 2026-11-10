@@ -4,10 +4,24 @@
 :root{--bg:#f1f4ff;--card:#fff;--line:#e3e8f7;--tx:#14183a;--mut:#6b7494;--pur:#2b4df5;--gold:#2b4df5;--ok:#10b981;--err:#ef4444;--soft:#eef1ff}
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
 a{color:var(--gold);text-decoration:none}
-nav{display:flex;align-items:center;gap:14px;padding:12px 18px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+nav.pub{display:flex;align-items:center;gap:14px;padding:12px 18px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 .logo{font-weight:800;font-size:18px;color:var(--tx)}.logo b{color:var(--gold)}
-#menu{display:none;margin-left:auto;background:none;border:1px solid var(--line);color:var(--tx);border-radius:8px;font-size:20px;padding:2px 10px}
-.links{display:flex;gap:16px;align-items:center;flex:1}.links form{margin:0}
+.pub .sp{flex:1}
+.top{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.ib{width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--line);border-radius:14px;color:var(--tx);font-size:20px;padding:0;cursor:pointer}
+.top .tt{font-weight:800;font-size:19px;line-height:1.2}.top .ts{color:var(--mut);font-size:13px}
+#ov{position:fixed;inset:0;background:rgba(10,14,40,.45);opacity:0;pointer-events:none;transition:.2s;z-index:20}
+#dr{position:fixed;top:0;left:0;bottom:0;width:290px;max-width:84vw;background:#fff;transform:translateX(-102%);transition:transform .22s;z-index:21;display:flex;flex-direction:column;overflow-y:auto;box-shadow:8px 0 30px rgba(20,24,58,.18)}
+body.dopen #dr{transform:none}body.dopen #ov{opacity:1;pointer-events:auto}
+.dh{padding:20px 18px 8px}.dh .logo{font-size:22px;letter-spacing:-.5px}
+.ws{margin:12px 14px;padding:12px;border:1px solid var(--line);border-radius:18px;display:flex;gap:12px;align-items:center}
+.ws i{font-style:normal;width:40px;height:40px;border-radius:12px;background:var(--pur);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.ws b{display:block;line-height:1.2}.ws small{color:var(--mut)}
+.dl{padding:6px 12px;flex:1}.dl .sec{font-size:12px;letter-spacing:.14em;color:var(--mut);margin:14px 8px 6px;font-weight:700}
+.dl a{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:14px;color:var(--mut);font-weight:600;font-size:16px}
+.dl a.on{background:var(--soft);color:var(--pur)}
+.dl a span{width:22px;text-align:center}
+.df{padding:14px;border-top:1px solid var(--line)}.df form{margin:0}.df button{width:100%}
 main{max-width:1000px;margin:0 auto;padding:20px 16px 60px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:20px;margin-bottom:16px;box-shadow:0 8px 24px rgba(43,77,245,.06)}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
@@ -23,14 +37,24 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 pre,code{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px;overflow-x:auto;display:block;font-size:13px}
 .bar{height:12px;background:linear-gradient(90deg,#2b4df5,#8b7bff);border-radius:8px}.hl{background:linear-gradient(180deg,#f4f6ff,#eaeeff)}.big{font-size:30px!important}
 h1,h2,h3{margin:.2em 0 .6em}.hero{text-align:center;padding:50px 0}.hero h1{font-size:34px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-@media(max-width:700px){ #menu{display:block}.links{display:none;width:100%;flex-direction:column;align-items:flex-start}.links.open{display:flex}}
+@media(min-width:900px){main{margin-left:290px;max-width:1100px}.top{margin-left:290px}#dr{transform:none;box-shadow:none;border-right:1px solid var(--line)}#ov{display:none}.top .ib{display:none}}
 </style></head><body>
-<nav><a class="logo" href="/">Zyvo<b>Gateway</b></a><button id="menu" onclick="document.querySelector('.links').classList.toggle('open')">☰</button>
-<div class="links">
-{% if user %}<a href="/dashboard">Dashboard</a><a href="/gateways">Gateways</a><a href="/keys">API Keys</a><a href="/transactions">Transactions</a><a href="/webhooks">Webhooks</a><a href="/subscription">Plan</a><a href="/settings">Settings</a><a href="/docs-api">Docs</a>
-{% if user.role in ['owner','seller'] %}<a href="/team">Team</a>{% endif %}
-{% if user.role=='owner' %}<a href="/admin">Owner Panel</a>{% endif %}
-<form method="post" action="/logout" style="margin-left:auto"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">Logout</button></form>
-{% else %}<a href="/docs-api">Docs</a><span style="margin-left:auto"></span><a href="/login">Login</a><a class="btn" href="/register">Register</a>{% endif %}
-</div></nav>
+{% set p=request.url.path if request else '' %}
+{% if user %}
+<div class="top"><button class="ib" aria-label="Menu" onclick="document.body.classList.toggle('dopen')">☰</button><div><div class="tt">{{ {'/dashboard':'Overview','/gateways':'Gateways','/keys':'API Keys','/transactions':'Transactions','/webhooks':'Webhooks','/subscription':'Plan','/settings':'Settings','/docs-api':'Docs','/team':'Team','/admin':'Owner Panel'}.get(p,'Zyvo Gateway') }}</div>{% if p=='/dashboard' %}<div class="ts">Your payment performance at a glance.</div>{% endif %}</div></div>
+<div id="ov" onclick="document.body.classList.remove('dopen')"></div>
+<aside id="dr"><div class="dh"><a class="logo" href="/dashboard">ZYVO <b>GATEWAY</b></a></div>
+<div class="ws"><i>{{ (user.name or 'U')[:1]|upper }}</i><div><b>{{ user.name }}</b><small>Live workspace</small></div></div>
+<div class="dl"><div class="sec">WORKSPACE</div>
+<a href="/dashboard" class="{{'on' if p=='/dashboard'}}"><span>▦</span>Overview</a><a href="/transactions" class="{{'on' if p=='/transactions'}}"><span>⇄</span>Transactions</a><a href="/gateways" class="{{'on' if p=='/gateways'}}"><span>₹</span>Gateways</a>
+<div class="sec">DEVELOPERS</div>
+<a href="/keys" class="{{'on' if p=='/keys'}}"><span>⌘</span>API keys</a><a href="/webhooks" class="{{'on' if p=='/webhooks'}}"><span>↯</span>Webhooks</a><a href="/docs-api" class="{{'on' if p=='/docs-api'}}"><span>≡</span>Docs</a>
+<div class="sec">ACCOUNT</div>
+<a href="/subscription" class="{{'on' if p=='/subscription'}}"><span>★</span>Plan</a><a href="/settings" class="{{'on' if p=='/settings'}}"><span>⚙</span>Settings</a>
+{% if user.role in ['owner','seller'] %}<a href="/team" class="{{'on' if p=='/team'}}"><span>👥</span>Team</a>{% endif %}
+{% if user.role=='owner' %}<a href="/admin" class="{{'on' if p=='/admin'}}"><span>🛡</span>Owner Panel</a>{% endif %}</div>
+<div class="df"><form method="post" action="/logout"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">Logout</button></form></div></aside>
+{% else %}
+<nav class="pub"><a class="logo" href="/">Zyvo<b>Gateway</b></a><span class="sp"></span><a href="/docs-api">Docs</a><a href="/login">Login</a><a class="btn" href="/register">Register</a></nav>
+{% endif %}
 <main>{% if flash %}<div class="flash {{flash.k}}">{{flash.m}}</div>{% endif %}{% block c %}{% endblock %}</main></body></html>
