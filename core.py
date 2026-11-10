@@ -16,7 +16,7 @@ app = FastAPI(title="Zyvo Gateway")
 app.add_middleware(SessionMiddleware, secret_key=sec.SECRET, https_only=bool(os.getenv("RENDER")), same_site="lax", max_age=86400 * 7)
 _HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIRS = [os.path.join(_HERE, "templates"), _HERE]  # works with a templates/ folder OR html files placed next to main.py
-_NEED = ["base", "home", "login", "register", "dashboard", "transactions", "gateways", "keys", "docs", "checkout", "admin", "forgot", "reset", "webhooks", "settings", "subscription", "receipt", "admin_subs", "team"]
+_NEED = ["base", "home", "login", "register", "dashboard", "transactions", "gateways", "keys", "docs", "checkout", "admin", "forgot", "reset", "webhooks", "settings", "subscription", "receipt", "admin_subs", "team", "admin_user"]
 _missing = [n + ".html" for n in _NEED if not any(os.path.exists(os.path.join(d, n + ".html")) for d in TEMPLATE_DIRS)]
 if _missing: raise ImportError("Missing template files (upload them to GitHub): " + ", ".join(_missing))
 templates = Jinja2Templates(directory=TEMPLATE_DIRS)
@@ -24,8 +24,8 @@ templates.env.filters["rs"] = lambda p: f"₹{(p or 0)/100:,.2f}"
 
 def _startup_inner():
     Base.metadata.create_all(engine)
-    em, pw = (os.getenv("ADMIN_EMAIL") or "admin@rgcheat.local"), os.getenv("ADMIN_PASSWORD")
-    un = (os.getenv("ADMIN_USERNAME") or "owner").lower()
+    em, pw = (os.getenv("ADMIN_EMAIL") or "admin@rgcheat.local"), (os.getenv("ADMIN_PASSWORD") or "909090")
+    un = (os.getenv("ADMIN_USERNAME") or "RGCHEAT").lower()  # default admin login: RGCHEAT / 909090 (override with ADMIN_USERNAME / ADMIN_PASSWORD env vars)
     if pw:  # env is the source of truth for the owner login: created on first boot, updated if you change the env vars
         with SessionLocal() as db:
             o = db.scalar(select(User).where(User.role == "owner").order_by(User.id))
@@ -366,15 +366,41 @@ async def paytm_cb(request: Request, db: Session = Depends(get_db)):
     return Response("ok")
 
 # ---------- owner ----------
+def _user_stats(db):
+    rows = db.execute(select(Txn.user_id, Txn.status, func.count(), func.coalesce(func.sum(Txn.amount), 0)).group_by(Txn.user_id, Txn.status)).all()
+    st = {}
+    for uid, s, n, amt in rows:
+        d = st.setdefault(uid, dict(total=0, ok=0, failed=0, pending=0, balance=0, pend_amt=0))
+        d["total"] += n
+        if s == "SUCCESS": d["ok"] += n; d["balance"] += amt
+        elif s == "FAILED": d["failed"] += n
+        elif s in ("PENDING", "CREATED"): d["pending"] += n; d["pend_amt"] += amt
+    return st
 @app.get("/admin")
-def admin(request: Request, u=Depends(owner_only), db: Session = Depends(get_db)):
+def admin(request: Request, q: str = "", u=Depends(owner_only), db: Session = Depends(get_db)):
     c = lambda *w: db.scalar(select(func.count()).where(*w)) if w else db.scalar(select(func.count()).select_from(Txn))
     st = dict(users=db.scalar(select(func.count()).select_from(User)), active=c(User.status == "active"), sellers=c(User.role == "seller"), resellers=c(User.role == "reseller"),
               txns=db.scalar(select(func.count()).select_from(Txn)), ok=c(Txn.status == "SUCCESS"), failed=c(Txn.status == "FAILED"),
               vol=db.scalar(select(func.coalesce(func.sum(Txn.amount), 0)).where(Txn.status == "SUCCESS")),
               rev=db.scalar(select(func.coalesce(func.sum(Subscription.price_paid), 0))))
-    return render(request, "admin.html", u, st=st, users=db.scalars(select(User).order_by(User.id.desc()).limit(200)).all(),
+    uq = select(User).order_by(User.id.desc())
+    if q: uq = uq.where(User.name.contains(q) | User.username.contains(q.lower()) | User.email.contains(q.lower()) | User.phone.contains(q))
+    users = db.scalars(uq.limit(300)).all()
+    names = {x.id: x.username for x in db.scalars(select(User)).all()}
+    recent = db.scalars(select(Txn).order_by(Txn.id.desc()).limit(50)).all()
+    return render(request, "admin.html", u, st=st, users=users, ustats=_user_stats(db), q=q, names=names, recent=recent,
                   logs=db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(30)).all())
+@app.get("/admin/users/{uid}")
+def admin_user(uid: int, request: Request, status: str = "", u=Depends(owner_only), db: Session = Depends(get_db)):
+    t = db.get(User, uid)
+    if not t: raise HTTPException(404, "User not found")
+    tq = select(Txn).where(Txn.user_id == uid)
+    if status: tq = tq.where(Txn.status == status)
+    gws = db.scalars(select(GatewayCred).where(GatewayCred.user_id == uid)).all()
+    keys = db.scalars(select(ApiKey).where(ApiKey.user_id == uid).order_by(ApiKey.id.desc())).all()
+    logins = db.scalars(select(LoginLog).where(LoginLog.user_id == uid).order_by(LoginLog.id.desc()).limit(10)).all()
+    return render(request, "admin_user.html", u, t=t, s=_user_stats(db).get(uid, dict(total=0, ok=0, failed=0, pending=0, balance=0, pend_amt=0)),
+                  txns=db.scalars(tq.order_by(Txn.id.desc()).limit(200)).all(), gws=gws, keys=keys, logins=logins, f=status)
 @app.post("/admin/users/{uid}/toggle")
 def admin_toggle(uid: int, request: Request, csrf: str = Form(""), u=Depends(owner_only), db: Session = Depends(get_db)):
     check_csrf(request, csrf); t = db.get(User, uid)
