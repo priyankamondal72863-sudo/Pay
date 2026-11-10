@@ -336,9 +336,9 @@ def worker():
         try:
             with SessionLocal() as db:
                 for d in db.scalars(select(WebhookDelivery).where(WebhookDelivery.status == "PENDING", WebhookDelivery.next_try <= now()).limit(20)).all(): deliver(db, d)
-                if time.time() - last > 60:
+                if time.time() - last > 15:  # fast reconciliation so bots/websites get their webhook within seconds of payment
                     last = time.time()
-                    for t in db.scalars(select(Txn).where(Txn.status == "PENDING", Txn.created >= now() - timedelta(days=1)).limit(20)).all(): refresh(db, t)  # reconciliation
+                    for t in db.scalars(select(Txn).where(Txn.status == "PENDING", Txn.created >= now() - timedelta(days=1)).order_by(Txn.id.desc()).limit(40)).all(): refresh(db, t)  # reconciliation
                     for r in db.scalars(select(Refund).where(Refund.status == "PENDING").limit(20)).all(): refresh_refund(db, r)
                     for s in db.scalars(select(Subscription).where(Subscription.status == "active", Subscription.end != None)).all():  # noqa
                         if s.end <= now(): s.status = "expired"; db.commit(); notify(db, s.user_id, "subscription_expired", "Your subscription has expired. You are now on the Free plan.")

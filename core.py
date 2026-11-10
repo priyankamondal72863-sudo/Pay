@@ -100,6 +100,10 @@ def register(request: Request, name: str = Form(), username: str = Form(), email
 @app.post("/logout")
 def logout(request: Request, csrf: str = Form("")):
     check_csrf(request, csrf); request.session.clear(); return go("/")
+@app.get("/docs-api.txt")  # downloadable plain-text docs (AI-ready)
+def docs_txt(request: Request):
+    body = templates.get_template("docs_api.txt").render(base=base_url(request))
+    return Response(body, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="payment-gateway-api-docs.txt"'})
 @app.get("/docs-api")
 def docs(request: Request, u=Depends(optional_user)): return render(request, "docs.html", u)
 
@@ -279,7 +283,9 @@ def refresh(db, t):
     return t
 def tx_json(t, request):
     return {"order_id": t.merchant_order_id or t.pay_id, "pay_id": t.pay_id, "status": t.status, "amount": t.amount / 100, "currency": t.currency,
-            "gateway": t.gateway, "transaction_id": t.provider_ref, "payment_url": f"{base_url(request)}/pay/{t.pay_id}"}
+            "gateway": t.gateway, "transaction_id": t.provider_ref, "payment_url": f"{base_url(request)}/pay/{t.pay_id}",
+            "qr_url": f"{base_url(request)}/pay/{t.pay_id}/qr.svg", "qr_png_url": f"{base_url(request)}/pay/{t.pay_id}/qr.png",
+            "upi_uri": t.qr_data, "expires_at": t.expires_at.isoformat() + "Z"}
 
 # ---------- public API ----------
 def api_user(request: Request, authorization: str = Header(""), x_api_key: str = Header(""), api_key: str = "", db: Session = Depends(get_db)):
@@ -312,7 +318,7 @@ def pick_gateway(db, u, gateway):
 def api_create_get(request: Request, amount: float, gateway: str = "", order_id: str = "", u=Depends(api_user), db: Session = Depends(get_db)):
     gateway = pick_gateway(db, u, gateway)
     t = create_payment(db, u, round(amount * 100), gateway, order_id or None, None)
-    return {"status": "success", "data": {**tx_json(t, request), "qr_url": f"{base_url(request)}/pay/{t.pay_id}/qr.svg", "expires_at": t.expires_at.isoformat() + "Z"}}
+    return {"status": "success", "data": tx_json(t, request)}
 def _lookup(db, u, oid):
     t = db.scalar(select(Txn).where(Txn.user_id == u.id, (Txn.pay_id == oid) | (Txn.merchant_order_id == oid)))
     if not t: raise HTTPException(404, "Order not found")
@@ -352,6 +358,10 @@ def pay_page(pay_id: str, request: Request, db: Session = Depends(get_db)):
 def pay_qr(pay_id: str, db: Session = Depends(get_db)):
     t = _pay(db, pay_id); buf = io.BytesIO(); segno.make(t.qr_data, error="m").save(buf, kind="svg", scale=8, border=2)
     return Response(buf.getvalue(), media_type="image/svg+xml")
+@app.get("/pay/{pay_id}/qr.png")  # PNG for Telegram/WhatsApp bots (they cannot show SVG)
+def pay_qr_png(pay_id: str, db: Session = Depends(get_db)):
+    t = _pay(db, pay_id); buf = io.BytesIO(); segno.make(t.qr_data, error="m").save(buf, kind="png", scale=8, border=3)
+    return Response(buf.getvalue(), media_type="image/png")
 @app.get("/pay/{pay_id}/status")
 def pay_status(pay_id: str, db: Session = Depends(get_db)):
     if not sec.rate_ok(f"poll:{pay_id}", 40): raise HTTPException(429, "slow down")
