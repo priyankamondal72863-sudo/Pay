@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block c %}
+<style>.nr{display:flex;gap:14px;padding:14px 4px;border-bottom:1px solid var(--line)}.nr:last-child{border-bottom:0}.nr i{font-style:normal;width:40px;height:40px;border-radius:12px;background:var(--soft);display:flex;align-items:center;justify-content:center;flex:none;font-size:18px}.nr small{color:var(--mut)}.nr.new{background:var(--soft);border-radius:14px;padding-left:10px;padding-right:10px}.nr .k{font-size:11px;letter-spacing:.1em;font-weight:800;color:var(--pur);text-transform:uppercase}</style>
+<div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Notifications</h3><a class="btn btn2" href="/settings">Alert settings</a></div>
+{% for n in rows %}{% set isnew = (not seen) or n.created > seen %}<div class="nr {{'new' if isnew}}"><i>{{ '📢' if n.kind=='broadcast' else ('💰' if n.kind in ('payment_success','plan_sold') else ('⏳' if 'expir' in n.kind else '🔔')) }}</i>
+<div><div class="k">{{ 'Broadcast' if n.kind=='broadcast' else n.kind.replace('_',' ') }}</div>{{n.message}}<br><small>{{n.created.strftime('%d %b %Y %H:%M')}} UTC</small></div></div>
+{% else %}<p class="mut" style="margin-top:16px">Nothing yet. Payment alerts, plan updates and admin broadcasts show up here.</p>{% endfor %}</div>{% endblock %}

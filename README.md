@@ -25,3 +25,20 @@ The service pings its own /healthz every 5 min (uses RENDER_EXTERNAL_URL, set by
 - Docs page (/docs-api) now has 3 tabs: Getting started, Overview, AI integration prompt. Downloads: /openapi.yaml, /downloads/zyvopay_telegram_bot.py, /docs-api.txt, and the prompt as .txt for the chosen language/target.
 - Owner Panel -> "Public base URL": set your public Render link or domain; it is used in docs, OpenAPI, bot file and prompts (empty = automatic).
 - Pink/white theme everywhere; dark mode is plum/pink.
+
+## Part 5 (profile + merchant setup)
+- /profile (menu: My profile): photo upload (JPG/PNG/WebP, max 2 MB, stored in the database so Render redeploys do not lose it), name, phone, business details, GSTIN, address, change password, theme. Username and login email are read-only.
+- "Gateways" is now "Merchant setup": cards per gateway (Edit / Test Rs 1 / Pause / Delete) and one Add/Edit form with a Paytm/FamPay provider switch. The shop-name field is empty by default (placeholder "Your shop name").
+- New columns are added to the existing database automatically on startup.
+
+## Part 6 (plans per gateway, trial, auto-unlock, broadcast)
+- Register: business name, contact name, work email, phone, password (8+, uppercase, number), terms. Username is auto-made from the email (login with email). Admin sees every field in Owner Panel -> user.
+- Subscriptions (/subscription): 12-hour trial (one per account, price/hours editable), FamePay / Paytm plans (30/90/180/365 days). Only the gateway a user has bought is visible in Merchant setup, New payment and the API; an expired plan locks it again and stops new payments.
+- Buying: tap Buy -> QR created with the OWNER's own FamePay/Paytm setup (log in as owner -> Merchant setup, test with Rs 1, enable) -> auto-verified -> plan unlocks, money goes to your bank. Owner Panel -> Plans & pricing -> "Where plan payments go" picks the gateway.
+- Switching plans credits unused days: list price x remaining days / total days (Rs129 x 23/30 = Rs98.90). If the credit covers the new price the plan switches instantly.
+- Owner Panel -> Plans & pricing: edit names, visibility, gateways, every tenure price, trial price/hours; assign plans by hand. Owner Panel -> Broadcast: message to all / paid / trial / expired / FamePay / Paytm users (shows in the bell + Notifications page).
+- Bank Service and BharatPe plans are seeded hidden: their payout module / gateway adapter are not in this code yet.
+- Existing merchants on the old Free plan are now locked until they buy/start trial (or you assign a plan). Paid legacy plans keep working until expiry.
+
+## Part 7 (backup)
+- Owner Panel -> Backup: download one .json.gz with every table; upload it to restore. "Add missing only" keeps current data and brings back missing users/records; "Replace everything" (type RESTORE) loads the backup exactly in one transaction (all-or-nothing). Columns that do not exist in the backup get defaults, so it works after you add new features. Use the same SECRET_KEY, otherwise saved gateway credentials / API keys cannot be decrypted. You are signed out after a restore.

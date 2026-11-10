@@ -1,5 +1,5 @@
-import os, io, json, secrets
-from datetime import timedelta
+import os, io, re, json, secrets
+from datetime import timedelta, datetime
 from fastapi import FastAPI, Request, Depends, HTTPException, Form, Header
 from fastapi.responses import RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -23,12 +23,25 @@ if _missing: raise ImportError("Missing template files (upload them to GitHub): 
 templates = Jinja2Templates(directory=TEMPLATE_DIRS)
 templates.env.filters["rs"] = lambda p: f"₹{(p or 0)/100:,.2f}"
 
+def _gate_ok(request, db, u, g):
+    from billing import allowed
+    if g in allowed(db, u): return True
+    flash(request, "This gateway is locked. Buy or renew a plan to unlock it.", "err"); return False
 def _startup_inner():
     Base.metadata.create_all(engine)
-    try:  # add key_enc column to an existing api_keys table (create_all does not alter tables)
+    try:  # add new columns to existing tables (create_all does not alter tables)
         from sqlalchemy import inspect, text
-        if "key_enc" not in [c["name"] for c in inspect(engine).get_columns("api_keys")]:
-            with engine.begin() as cn: cn.execute(text("ALTER TABLE api_keys ADD COLUMN key_enc TEXT DEFAULT ''"))
+        want = {"api_keys": [("key_enc", "TEXT DEFAULT ''")],
+                "users": [("business_name", "VARCHAR(120) DEFAULT ''"), ("business_type", "VARCHAR(40) DEFAULT ''"), ("gstin", "VARCHAR(20) DEFAULT ''"),
+                          ("address", "TEXT DEFAULT ''"), ("photo_b64", "TEXT DEFAULT ''"), ("photo_mime", "VARCHAR(20) DEFAULT ''"), ("photo_v", "INTEGER DEFAULT 0"),
+                          ("trial_used", "BOOLEAN DEFAULT FALSE"), ("notif_seen", "TIMESTAMP"), ("terms_at", "TIMESTAMP")],
+                "plans": [("code", "VARCHAR(20) DEFAULT ''"), ("prices", "TEXT DEFAULT ''"), ("hours", "INTEGER DEFAULT 0"), ("active", "BOOLEAN DEFAULT TRUE"), ("sort", "INTEGER DEFAULT 0")],
+                "subscriptions": [("value", "INTEGER DEFAULT 0"), ("days", "INTEGER DEFAULT 0"), ("source", "VARCHAR(12) DEFAULT 'admin'")]}
+        for tbl, cols in want.items():
+            have = [c["name"] for c in inspect(engine).get_columns(tbl)]
+            for name, ddl in cols:
+                if name not in have:
+                    with engine.begin() as cn: cn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {name} {ddl}"))
     except Exception as e: print("migration error", e)
     em, pw = (os.getenv("ADMIN_EMAIL") or "admin@rgcheat.local"), (os.getenv("ADMIN_PASSWORD") or "909090")
     un = (os.getenv("ADMIN_USERNAME") or "RGCHEAT").lower()  # default admin login: RGCHEAT / 909090 (override with ADMIN_USERNAME / ADMIN_PASSWORD env vars)
@@ -43,6 +56,8 @@ def _startup_inner():
             db.commit()
     from extras import start
     start()
+    from billing import seed_plans
+    with SessionLocal() as db: seed_plans(db)
 
 # ---------- helpers ----------
 _SET = {}  # tiny per-process cache (30s) so an admin change reaches every gunicorn worker quickly
@@ -66,7 +81,7 @@ def render(request, name, user=None, **ctx):
     if user:
         try:
             from models import Notification
-            with SessionLocal() as _d: bell = _d.scalar(select(func.count()).where(Notification.user_id == user.id, Notification.created >= now() - timedelta(days=1))) or 0
+            with SessionLocal() as _d: bell = _d.scalar(select(func.count()).where(Notification.user_id == user.id, Notification.created > (user.notif_seen or datetime(1970, 1, 1)))) or 0
         except Exception: bell = 0
     ctx.update(request=request, user=user, csrf=s["csrf"], flash=s.pop("flash", None), base=base_url(request), bell=bell)
     return templates.TemplateResponse(request, name, ctx)
@@ -107,21 +122,36 @@ def login(request: Request, identity: str = Form(), password: str = Form(), csrf
 @app.get("/register")
 def register_page(request: Request): return render(request, "register.html")
 @app.post("/register")
-def register(request: Request, name: str = Form(), username: str = Form(), email: str = Form(), phone: str = Form(),
-             password: str = Form(), confirm: str = Form(), csrf: str = Form(""), db: Session = Depends(get_db)):
+def register(request: Request, business_name: str = Form(""), name: str = Form(""), email: str = Form(""), phone: str = Form(""), password: str = Form(""),
+             terms: str = Form(""), csrf: str = Form(""), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
-    username, email = username.strip().lower(), email.strip().lower()
+    bn, nm, email, ph = business_name.strip()[:120], name.strip()[:120], email.strip().lower(), re.sub(r"[\s\-()]", "", phone.strip())
     err = None
-    if len(password) < 8: err = "Password must be at least 8 characters."
-    elif password != confirm: err = "Passwords do not match."
-    elif not username.replace("_", "").isalnum() or len(username) < 3: err = "Username: 3+ letters/numbers/underscore."
-    elif db.scalar(select(User).where(User.username == username)): err = "Username already taken."
-    elif db.scalar(select(User).where(User.email == email)): err = "Email already registered."
-    if err: flash(request, err, "err"); return go("/register")
-    u = User(name=name.strip(), username=username, email=email, phone=phone.strip(), pw_hash=sec.hash_pw(password)); db.add(u); db.flush()
-    audit(db, u.id, "register"); db.commit()
+    if not bn: err = "Enter your business name."
+    elif not nm: err = "Enter the contact person's full name."
+    elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 190: err = "Enter a valid work email."
+    elif not re.fullmatch(r"\+?\d{10,15}", ph): err = "Enter a valid phone number (10-15 digits)."
+    elif len(password) < 8 or not re.search(r"[A-Z]", password) or not re.search(r"\d", password): err = "Password needs 8+ characters, an uppercase letter and a number."
+    elif not terms: err = "Please accept the Terms and Privacy Policy."
+    elif db.scalar(select(User).where(User.email == email)): err = "Email already registered. Please sign in."
+    if err: flash(request, err, "err"); return render(request, "register.html", None, form=dict(business_name=bn, name=nm, email=email, phone=phone.strip()))
+    base_un = re.sub(r"[^a-z0-9_]", "", email.split("@")[0])[:20]
+    if len(base_un) < 3: base_un = "user"
+    username = base_un
+    while db.scalar(select(User).where(User.username == username)): username = f"{base_un[:20]}{secrets.randbelow(9000) + 1000}"
+    u = User(name=nm, username=username, email=email, phone=ph, pw_hash=sec.hash_pw(password), business_name=bn, terms_at=now()); db.add(u); db.flush()
+    audit(db, u.id, "register", bn); db.commit()
+    try:
+        from extras import notify
+        ow = db.scalar(select(User).where(User.role == "owner").order_by(User.id))
+        if ow: notify(db, ow.id, "new_user", f"New user: {bn} ({email}, {ph})")
+    except Exception as e: print("owner notify error", e)
     request.session.clear(); request.session["uid"] = u.id
-    return go("/dashboard")
+    return go("/subscription")
+@app.get("/terms")
+def terms_page(request: Request, u=Depends(optional_user)): return render(request, "legal.html", u, kind="terms")
+@app.get("/privacy")
+def privacy_page(request: Request, u=Depends(optional_user)): return render(request, "legal.html", u, kind="privacy")
 @app.post("/logout")
 def logout(request: Request, csrf: str = Form("")):
     check_csrf(request, csrf); request.session.clear(); return go("/")
@@ -175,7 +205,7 @@ def dashboard(request: Request, u=Depends(current), db: Session = Depends(get_db
     bad = by.get("FAILED", 0) + by.get("EXPIRED", 0)
     s = dict(total=total, ok=ok, failed=bad, pending=by.get("PENDING", 0) + by.get("CREATED", 0), vol=vol, t_all=t_all, t_ok=t_ok, t_vol=t_vol, pend_amt=pend_amt,
              rate=round(ok * 100 / total, 1) if total else 0, avg=int(vol / ok) if ok else 0)
-    return render(request, "dashboard.html", u, s=s, gwise=gwise, days=days, maxd=max([d[1] for d in days] + [1]), recent=recent)
+    return render(request, "dashboard.html", u, s=s, gwise=gwise, days=days, maxd=max([d[1] for d in days] + [1]), recent=recent, noplan=(u.role != "owner" and not __import__("billing").allowed(db, u)))
 
 @app.get("/transactions")
 def transactions(request: Request, status: str = "", gateway: str = "", search: str = "", u=Depends(current), db: Session = Depends(get_db)):
@@ -187,7 +217,9 @@ def transactions(request: Request, status: str = "", gateway: str = "", search: 
     return render(request, "transactions.html", u, rows=db.scalars(q.order_by(Txn.id.desc()).limit(200)).all(), f=dict(status=status, gateway=gateway, search=search))
 @app.get("/transactions/new")
 def txn_new(request: Request, u=Depends(current), db: Session = Depends(get_db)):
-    gws = [g for g in ("paytm", "fampay") if cfg_for(db, u.id, g)[0]]
+    from billing import allowed as _allowed
+    al = _allowed(db, u)
+    gws = [g for g in ("paytm", "fampay") if g in al and cfg_for(db, u.id, g)[0]]
     return render(request, "newpayment.html", u, gws=gws)
 @app.post("/transactions/new")
 def txn_new_post(request: Request, amount: float = Form(), order_id: str = Form(""), gateway: str = Form(""), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
@@ -198,27 +230,40 @@ def txn_new_post(request: Request, amount: float = Form(), order_id: str = Form(
 
 # ---------- gateways ----------
 @app.get("/gateways")
-def gateways(request: Request, u=Depends(current), db: Session = Depends(get_db)):
-    creds = {c.gateway: c for c in db.scalars(select(GatewayCred).where(GatewayCred.user_id == u.id))}
-    pcfg = {}
-    if creds.get("paytm"):
-        try: d = sec.dec(creds["paytm"].data_enc); pcfg = {"shop": d.get("shop", ""), "upi": d.get("upi", ""), "mid": d.get("mid", ""), "key": bool(d.get("key"))}
-        except Exception: pcfg = {}
-    return render(request, "gateways.html", u, creds=creds, adapters=gw.ADAPTERS, pcfg=pcfg)
-@app.post("/gateways/paytm/save")
-def paytm_save(request: Request, shop: str = Form(""), upi: str = Form(), mid: str = Form(), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+def gateways(request: Request, edit: str = "", u=Depends(current), db: Session = Depends(get_db)):
+    from billing import allowed as _allowed
+    from extras import plan_for
+    al = _allowed(db, u)
+    creds = {c.gateway: c for c in db.scalars(select(GatewayCred).where(GatewayCred.user_id == u.id)) if c.gateway in al}  # only gateways the user bought
+    cfgs = {}
+    for g, c in creds.items():
+        try: cfgs[g] = sec.dec(c.data_enc)
+        except Exception: cfgs[g] = {}
+    default = next((g for g in ("fampay", "paytm") if g in creds and creds[g].enabled), "")
+    edit = edit if edit in ("paytm", "fampay") and edit in creds else ""
+    return render(request, "gateways.html", u, creds=creds, cfgs=cfgs, default=default, edit=edit, adapters=gw.ADAPTERS, al=[g for g in ("fampay", "paytm") if g in al], plan=plan_for(db, u.id)[0])
+@app.post("/gateways/{gname}/delete")
+def gateway_delete(gname: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
-    upi, mid = upi.strip(), mid.strip()
-    if "@" not in upi or not mid: flash(request, "UPI ID and MID are required.", "err"); return go("/gateways")
+    c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == gname))
+    if c: db.delete(c); audit(db, u.id, "gateway_delete", gname); db.commit(); flash(request, f"{gname.capitalize()} setup deleted.")
+    return go("/gateways")
+@app.post("/gateways/paytm/save")
+def paytm_save(request: Request, shop: str = Form(""), upi: str = Form(), mid: str = Form(), enable: str = Form(""), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    if not _gate_ok(request, db, u, "paytm"): return go("/subscription")
+    upi, mid, shop = upi.strip(), mid.strip(), shop.strip()
+    if not shop or "@" not in upi or not mid: flash(request, "Your shop name, UPI ID and MID are required.", "err"); return go("/gateways")
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "paytm"))
-    data = sec.enc({"shop": (shop.strip() or u.name)[:60], "upi": upi, "mid": mid, "key": ""})  # only Shop name + UPI ID + MID are needed
-    if c: c.data_enc, c.env = data, "production"
-    else: db.add(GatewayCred(user_id=u.id, gateway="paytm", data_enc=data, env="production", enabled=True))
+    data = sec.enc({"shop": shop[:60], "upi": upi, "mid": mid, "key": ""})  # only Shop name + UPI ID + MID are needed
+    if c: c.data_enc, c.env, c.enabled = data, "production", bool(enable)
+    else: db.add(GatewayCred(user_id=u.id, gateway="paytm", data_enc=data, env="production", enabled=bool(enable)))
     audit(db, u.id, "gateway_save", "paytm"); db.commit(); flash(request, "Paytm setup saved. Press the Rs 1 test to confirm."); return go("/gateways")
 @app.post("/gateways/{gname}/testpay")
 def gateway_testpay(gname: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     """Creates a Rs 1 QR with the saved credentials (even if the gateway is not enabled yet). Pay it: SUCCESS = gateway works."""
     check_csrf(request, csrf)
+    if not _gate_ok(request, db, u, gname): return go("/subscription")
     ad = gw.get(gname)
     if not ad or not ad.AVAILABLE: raise HTTPException(404)
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == gname))
@@ -236,6 +281,7 @@ def gateway_testpay(gname: str, request: Request, csrf: str = Form(""), u=Depend
 @app.post("/gateways/paytm/{action}")
 def paytm_action(action: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
+    if not _gate_ok(request, db, u, "paytm"): return go("/subscription")
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "paytm"))
     if not c: flash(request, "Save credentials first.", "err"); return go("/gateways")
     if action == "test":
@@ -247,19 +293,21 @@ def paytm_action(action: str, request: Request, csrf: str = Form(""), u=Depends(
     db.commit(); return go("/gateways")
 
 @app.post("/gateways/fampay/save")
-def fampay_save(request: Request, shop: str = Form(), upi: str = Form(), gmail: str = Form(), app_password: str = Form(""), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
+def fampay_save(request: Request, shop: str = Form(""), upi: str = Form(), gmail: str = Form(), app_password: str = Form(""), enable: str = Form(""), csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
+    if not _gate_ok(request, db, u, "fampay"): return go("/subscription")
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "fampay"))
     old = sec.dec(c.data_enc) if c else {}
     pw = app_password.replace(" ", "").strip() or old.get("app_password", "")
-    if not pw or "@" not in upi or "@" not in gmail: flash(request, "Shop name, UPI ID, Gmail and App Password required.", "err"); return go("/gateways")
+    if not shop.strip() or not pw or "@" not in upi or "@" not in gmail: flash(request, "Your shop name, UPI ID, Gmail and App Password are required.", "err"); return go("/gateways")
     data = sec.enc({"shop": shop.strip()[:60], "upi": upi.strip(), "gmail": gmail.strip(), "app_password": pw})
-    if c: c.data_enc = data
-    else: db.add(GatewayCred(user_id=u.id, gateway="fampay", data_enc=data, env="production"))
+    if c: c.data_enc, c.enabled = data, bool(enable)
+    else: db.add(GatewayCred(user_id=u.id, gateway="fampay", data_enc=data, env="production", enabled=bool(enable)))
     audit(db, u.id, "gateway_save", "fampay"); db.commit(); flash(request, "FamPay setup saved (encrypted)."); return go("/gateways")
 @app.post("/gateways/fampay/{action}")
 def fampay_action(action: str, request: Request, csrf: str = Form(""), u=Depends(current), db: Session = Depends(get_db)):
     check_csrf(request, csrf)
+    if not _gate_ok(request, db, u, "fampay"): return go("/subscription")
     c = db.scalar(select(GatewayCred).where(GatewayCred.user_id == u.id, GatewayCred.gateway == "fampay"))
     if not c: flash(request, "Save setup first.", "err"); return go("/gateways")
     if action == "test":
@@ -390,8 +438,10 @@ async def api_create(request: Request, u=Depends(api_user), db: Session = Depend
     return {"success": True, **tx_json(t, request)}
 def pick_gateway(db, u, gateway):
     if gateway: return gateway
-    for g in ("fampay", "paytm"):  # first enabled gateway of the merchant
-        if cfg_for(db, u.id, g)[0]: return g
+    from billing import allowed as _allowed
+    al = _allowed(db, u)
+    for g in ("fampay", "paytm"):  # first enabled gateway of the merchant that the plan unlocks
+        if g in al and cfg_for(db, u.id, g)[0]: return g
     return "paytm"
 @app.get("/api/create_order")  # simple GET style: ?amount=99&api_key=...
 @app.get("/api/create_order.php")
@@ -433,7 +483,7 @@ def checkout_php(request: Request, amount: float, api_key: str = "", order_id: s
 @app.get("/pay/{pay_id}")
 def pay_page(pay_id: str, request: Request, db: Session = Depends(get_db)):
     t = _pay(db, pay_id); m = db.get(User, t.user_id)
-    return render(request, "checkout.html", None, t=t, merchant=m.name, secs=max(0, int((t.expires_at - now()).total_seconds())))
+    return render(request, "checkout.html", None, t=t, merchant=(m.business_name or m.name), mphoto=(f"/profile/photo/{m.id}?v={m.photo_v}" if m.photo_b64 else ""), secs=max(0, int((t.expires_at - now()).total_seconds())), ret=("/subscription" if (t.merchant_order_id or "").startswith("SUB-") else ""))
 @app.get("/pay/{pay_id}/qr.svg")
 def pay_qr(pay_id: str, db: Session = Depends(get_db)):
     t = _pay(db, pay_id); buf = io.BytesIO(); segno.make(t.qr_data, error="m").save(buf, kind="svg", scale=8, border=2)
@@ -478,11 +528,12 @@ def admin(request: Request, q: str = "", u=Depends(owner_only), db: Session = De
               vol=db.scalar(select(func.coalesce(func.sum(Txn.amount), 0)).where(Txn.status == "SUCCESS")),
               rev=db.scalar(select(func.coalesce(func.sum(Subscription.price_paid), 0))))
     uq = select(User).order_by(User.id.desc())
-    if q: uq = uq.where(User.name.contains(q) | User.username.contains(q.lower()) | User.email.contains(q.lower()) | User.phone.contains(q))
+    if q: uq = uq.where(User.name.contains(q) | User.business_name.contains(q) | User.username.contains(q.lower()) | User.email.contains(q.lower()) | User.phone.contains(q))
     users = db.scalars(uq.limit(300)).all()
     names = {x.id: x.username for x in db.scalars(select(User)).all()}
     recent = db.scalars(select(Txn).order_by(Txn.id.desc()).limit(50)).all()
-    return render(request, "admin.html", u, st=st, users=users, ustats=_user_stats(db), q=q, names=names, recent=recent, bset=get_setting("base_url"), bauto=base_url(request),
+    from billing import plan_map
+    return render(request, "admin.html", u, st=st, users=users, upl=plan_map(db, [x.id for x in users]), ustats=_user_stats(db), q=q, names=names, recent=recent, bset=get_setting("base_url"), bauto=base_url(request),
                   logs=db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(30)).all())
 @app.get("/admin/users/{uid}")
 def admin_user(uid: int, request: Request, status: str = "", u=Depends(owner_only), db: Session = Depends(get_db)):
@@ -493,8 +544,22 @@ def admin_user(uid: int, request: Request, status: str = "", u=Depends(owner_onl
     gws = db.scalars(select(GatewayCred).where(GatewayCred.user_id == uid)).all()
     keys = db.scalars(select(ApiKey).where(ApiKey.user_id == uid).order_by(ApiKey.id.desc())).all()
     logins = db.scalars(select(LoginLog).where(LoginLog.user_id == uid).order_by(LoginLog.id.desc()).limit(10)).all()
+    from extras import plan_for
+    from models import Plan, SubOrder, Notification
+    gdata = {}
+    for g in gws:  # admin sees what the merchant configured, but never secrets (passwords / app passwords)
+        try: d = sec.dec(g.data_enc)
+        except Exception: d = {}
+        gdata[g.gateway] = dict(shop=d.get("shop", ""), upi=d.get("upi", ""), extra=d.get("mid") or d.get("gmail") or "")
+    cur, sub = plan_for(db, uid)
     return render(request, "admin_user.html", u, t=t, s=_user_stats(db).get(uid, dict(total=0, ok=0, failed=0, pending=0, balance=0, pend_amt=0)),
-                  txns=db.scalars(tq.order_by(Txn.id.desc()).limit(200)).all(), gws=gws, keys=keys, logins=logins, f=status)
+                  txns=db.scalars(tq.order_by(Txn.id.desc()).limit(200)).all(), gws=gws, gdata=gdata, keys=keys, logins=logins, f=status, plan=cur, sub=sub,
+                  plans={p.id: p for p in db.scalars(select(Plan))},
+                  subs=db.scalars(select(Subscription).where(Subscription.user_id == uid).order_by(Subscription.id.desc()).limit(20)).all(),
+                  orders=db.scalars(select(SubOrder).where(SubOrder.user_id == uid).order_by(SubOrder.id.desc()).limit(20)).all(),
+                  notes=db.scalars(select(Notification).where(Notification.user_id == uid).order_by(Notification.id.desc()).limit(15)).all(),
+                  acts=db.scalars(select(AuditLog).where(AuditLog.user_id == uid).order_by(AuditLog.id.desc()).limit(30)).all(),
+                  parent=db.get(User, t.parent_id) if t.parent_id else None)
 @app.post("/admin/users/{uid}/toggle")
 def admin_toggle(uid: int, request: Request, csrf: str = Form(""), u=Depends(owner_only), db: Session = Depends(get_db)):
     check_csrf(request, csrf); t = db.get(User, uid)
@@ -533,3 +598,9 @@ _th.Thread(target=_keep_alive, daemon=True, name="keep-alive").start()
 
 from extras import router  # noqa: E402
 app.include_router(router)
+from profile_pages import router as _prouter  # noqa: E402
+app.include_router(_prouter)
+from billing import router as _brouter  # noqa: E402
+app.include_router(_brouter)
+from backup import router as _bkrouter  # noqa: E402
+app.include_router(_bkrouter)

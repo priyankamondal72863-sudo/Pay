@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block c %}
+{% if noplan %}<div class="card" style="background:#fff3d6;color:#8a5a00;border-color:#f3d38a"><b>No active plan.</b> Gateways are locked and new payments are off. <a href="/subscription" style="font-weight:800">Start free trial or buy a plan &rarr;</a></div>{% endif %}
 <div class="g4">
 <div class="stat top1"><div class="sh"><small>SUCCESSFUL VOLUME</small><i>₹</i></div><div class="big">{{s.vol|rs}}</div><em class="ok">Verified payments</em></div>
 <div class="stat"><div class="sh"><small>TOTAL PAYMENTS</small><i>⇄</i></div><div class="big">{{s.total}}</div><em class="ok">{{s.vol|rs}} processed</em></div>

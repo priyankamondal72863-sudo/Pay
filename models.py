@@ -14,6 +14,16 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default="merchant")  # owner|seller|reseller|merchant
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|suspended
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    business_name: Mapped[str] = mapped_column(String(120), default="")
+    business_type: Mapped[str] = mapped_column(String(40), default="")
+    gstin: Mapped[str] = mapped_column(String(20), default="")
+    address: Mapped[str] = mapped_column(Text, default="")
+    photo_b64: Mapped[str] = mapped_column(Text, default="")
+    photo_mime: Mapped[str] = mapped_column(String(20), default="")
+    photo_v: Mapped[int] = mapped_column(Integer, default=0)
+    trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    notif_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    terms_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created: Mapped[datetime] = mapped_column(DateTime, default=now)
 class GatewayCred(Base):
     __tablename__ = "gateway_credentials"
@@ -75,6 +85,11 @@ class Plan(Base):
     max_keys: Mapped[int] = mapped_column(Integer, default=1)
     gateways: Mapped[str] = mapped_column(String(100), default="paytm")
     support: Mapped[str] = mapped_column(String(40), default="Community")
+    code: Mapped[str] = mapped_column(String(20), default="")  # free|trial|fampay|paytm|bharatpe|bank
+    prices: Mapped[str] = mapped_column(Text, default="")  # JSON {"30": paise, "90": paise, ...}
+    hours: Mapped[int] = mapped_column(Integer, default=0)  # trial length in hours
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort: Mapped[int] = mapped_column(Integer, default=0)
 class Subscription(Base):
     __tablename__ = "subscriptions"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -85,6 +100,9 @@ class Subscription(Base):
     price_paid: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(12), default="active")  # active|replaced|expired
     notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    value: Mapped[int] = mapped_column(Integer, default=0)  # list value of the whole period (basis for unused-day credit); 0 = use price_paid
+    days: Mapped[int] = mapped_column(Integer, default=0)  # total days of the period (0 = derive from start/end)
+    source: Mapped[str] = mapped_column(String(12), default="admin")  # admin|payment|trial|credit
     created: Mapped[datetime] = mapped_column(DateTime, default=now)
 class WebhookEndpoint(Base):
     __tablename__ = "webhook_endpoints"
@@ -142,3 +160,25 @@ class Setting(Base):
     __tablename__ = "site_settings"
     key: Mapped[str] = mapped_column(String(60), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
+
+class SubOrder(Base):  # a plan purchase; paid through the OWNER's own gateway, auto-verified
+    __tablename__ = "sub_orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"))
+    days: Mapped[int] = mapped_column(Integer, default=30)
+    list_price: Mapped[int] = mapped_column(Integer, default=0)  # paise
+    credit: Mapped[int] = mapped_column(Integer, default=0)  # paise, unused-day credit applied
+    amount: Mapped[int] = mapped_column(Integer, default=0)  # paise actually payable
+    status: Mapped[str] = mapped_column(String(12), default="PENDING", index=True)  # PENDING|PAID|EXPIRED|FAILED|CANCELLED
+    pay_id: Mapped[str] = mapped_column(String(40), default="")
+    sub_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created: Mapped[datetime] = mapped_column(DateTime, default=now)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+class Broadcast(Base):
+    __tablename__ = "broadcasts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message: Mapped[str] = mapped_column(String(300))
+    audience: Mapped[str] = mapped_column(String(40), default="all")
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    created: Mapped[datetime] = mapped_column(DateTime, default=now)

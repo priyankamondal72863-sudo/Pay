@@ -29,8 +29,9 @@ def plan_for(db, uid):
     return db.scalar(select(Plan).where(Plan.name == "Free")), None
 def max_keys(db, uid): return plan_for(db, uid)[0].max_keys
 def check_plan(db, user, gateway):
+    if user.role == "owner": return  # the owner collects plan payments and tests on own gateways without a plan
     p, _ = plan_for(db, user.id)
-    if gateway not in [g.strip() for g in p.gateways.split(",")]: raise HTTPException(403, f"Gateway not included in your '{p.name}' plan")
+    if gateway not in [g.strip() for g in (p.gateways or "").split(",")]: raise HTTPException(403, "No active plan for this gateway. Buy or renew a plan on the Subscriptions page.")
     m0 = now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if db.scalar(select(func.count()).where(Txn.user_id == user.id, Txn.created >= m0)) >= p.txn_limit:
         raise HTTPException(403, "Monthly transaction limit reached for your plan")
@@ -102,6 +103,8 @@ def deliver(db, d):
 # ---------- payment status changes ----------
 EVENTS = {"SUCCESS": "payment.success", "FAILED": "payment.failed", "EXPIRED": "payment.expired", "REFUNDED": "payment.refunded"}
 def on_change(db, t):
+    if (t.merchant_order_id or "").startswith("SUB-"):  # a plan purchase paid on the owner's gateway: unlock the plan, no merchant webhooks
+        from billing import on_sub_txn; on_sub_txn(db, t); return
     if '"test": true' in (t.customer or ""): return  # Rs 1 gateway test payments never trigger webhooks/alerts
     ev = EVENTS.get(t.status)
     if not ev: return
@@ -226,43 +229,11 @@ def settings_save(request: Request, telegram_chat_id: str = Form(""), notify_ema
     db.commit(); flash(request, "Settings saved."); return go("/settings")
 
 # ---------- subscriptions ----------
-@router.get("/subscription")
-def my_sub(request: Request, u=Depends(current), db=Depends(get_db)):
-    p, s = plan_for(db, u.id); plans = {x.id: x for x in db.scalars(select(Plan))}
-    hist = db.scalars(select(Subscription).where(Subscription.user_id == u.id).order_by(Subscription.id.desc())).all()
-    return render(request, "subscription.html", u, plan=p, sub=s, hist=hist, plans=plans)
 @router.get("/subscription/{sid}/receipt")
 def receipt(sid: int, request: Request, u=Depends(current), db=Depends(get_db)):
     s = db.get(Subscription, sid)
     if not s or (s.user_id != u.id and u.role != "owner"): raise HTTPException(404)
     return render(request, "receipt.html", u, s=s, plan=db.get(Plan, s.plan_id), buyer=db.get(User, s.user_id))
-@router.get("/admin/subscriptions")
-def admin_subs(request: Request, u=Depends(owner_only), db=Depends(get_db)):
-    plans = db.scalars(select(Plan).order_by(Plan.id)).all()
-    return render(request, "admin_subs.html", u, plans=plans, pm={p.id: p for p in plans}, users=db.scalars(select(User).where(User.role != "owner").order_by(User.id.desc()).limit(300)).all(),
-                  subs=db.scalars(select(Subscription).order_by(Subscription.id.desc()).limit(50)).all(),
-                  rev=db.scalar(select(func.coalesce(func.sum(Subscription.price_paid), 0))))
-@router.post("/admin/plans/{pid}")
-def plan_edit(pid: int, request: Request, price: float = Form(), duration_days: int = Form(), req_limit: int = Form(), txn_limit: int = Form(), max_keys_: int = Form(alias="max_keys"),
-              gateways: str = Form("paytm"), support: str = Form(""), csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
-    check_csrf(request, csrf); p = db.get(Plan, pid)
-    if p: p.price, p.duration_days, p.req_limit, p.txn_limit, p.max_keys, p.gateways, p.support = round(price * 100), max(0, duration_days), req_limit, txn_limit, max_keys_, gateways.strip(), support.strip()[:40]; audit(db, u.id, "plan_edit", p.name); db.commit()
-    flash(request, "Plan updated."); return go("/admin/subscriptions")
-@router.post("/admin/assign")
-def assign(request: Request, user_id: int = Form(), plan_id: int = Form(), price_paid: str = Form(""), csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
-    check_csrf(request, csrf); tu, p = db.get(User, user_id), db.get(Plan, plan_id)
-    if not tu or not p: raise HTTPException(404)
-    cur = db.scalar(select(Subscription).where(Subscription.user_id == tu.id, Subscription.status == "active"))
-    start = now()
-    if cur:
-        if cur.plan_id == p.id and cur.end and cur.end > start: start = cur.end  # renewal extends
-        cur.status = "replaced"
-    end = start + timedelta(days=p.duration_days) if p.duration_days else None
-    paid = round(float(price_paid) * 100) if price_paid.strip() else p.price
-    db.add(Subscription(user_id=tu.id, plan_id=p.id, start=now(), end=end, price_paid=paid)); audit(db, u.id, "assign_plan", f"user {tu.id} -> {p.name}"); db.commit()
-    notify(db, tu.id, "subscription", f"Your plan is now {p.name}" + (f" (valid until {end:%d %b %Y})" if end else " (lifetime)"))
-    flash(request, f"Assigned {p.name} to {tu.username}."); return go("/admin/subscriptions")
-
 # ---------- team (seller / reseller) ----------
 def can_manage(u, t): return t.role != "owner" and (u.role == "owner" or (u.role == "seller" and t.parent_id == u.id))
 @router.get("/team")
