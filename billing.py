@@ -282,6 +282,18 @@ def trial_reset(uid: int, request: Request, csrf: str = Form(""), u=Depends(owne
     check_csrf(request, csrf); t = db.get(User, uid)
     if t: t.trial_used = False; audit(db, u.id, "trial_reset", str(uid)); db.commit(); flash(request, "Free trial can be used again by this user.")
     return go(f"/admin/users/{uid}")
+@router.post("/admin/users/{uid}/unlock")
+def unlock_user(uid: int, request: Request, plan_id: int = Form(), days: int = Form(30), custom_days: str = Form(""), csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
+    """Owner quick-unlock from the user page: gives FamPay / Paytm access for N days (default 30 = 1 month) at no charge. Same plan again = extends."""
+    check_csrf(request, csrf); tu, p = db.get(User, uid), db.get(Plan, plan_id)
+    if not tu or not p or p.code not in LABEL: raise HTTPException(404)
+    try: d = int(custom_days) if custom_days.strip() else days
+    except ValueError: d = days
+    d = min(max(1, d), 3650)
+    s = grant(db, tu.id, p, d, 0, 0, "admin")
+    audit(db, u.id, "unlock_plan", f"user {tu.id} -> {p.name} {d}d"); db.commit()
+    notify(db, tu.id, "subscription", f"{LABEL[p.code]} unlocked by admin until {s.end:%d %b %Y %H:%M} UTC.")
+    flash(request, f"{LABEL[p.code]} unlocked for {tu.username} for {d} day(s)."); return go(f"/admin/users/{uid}")
 @router.post("/admin/users/{uid}/plan_cancel")
 def plan_cancel(uid: int, request: Request, csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
     check_csrf(request, csrf); n = 0

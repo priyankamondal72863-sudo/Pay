@@ -17,6 +17,14 @@
 {% if sub %}<form method="post" action="/admin/users/{{t.id}}/plan_cancel" onsubmit="return confirm('End this plan now?')"><input type="hidden" name="csrf" value="{{csrf}}"><button class="danger">End plan now</button></form>{% endif %}
 {% if t.role!='owner' %}<form method="post" action="/admin/users/{{t.id}}/toggle" onsubmit="return confirm('Change status?')"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">{{'Suspend user' if t.status=='active' else 'Activate user'}}</button></form>{% endif %}</div></div>
 
+<div class="card"><h3>Unlock gateway (admin)</h3>
+<p class="mut" style="font-size:13px;margin:0 0 8px">Give this user FamPay or Paytm access for free. Pick the gateway and how long. Doing it again for the same gateway extends the time; choosing the other gateway switches the plan. Use "End plan now" above to lock it again.</p>
+<form method="post" action="/admin/users/{{t.id}}/unlock" class="row"><input type="hidden" name="csrf" value="{{csrf}}">
+<select name="plan_id" style="margin:0">{% for p in plans.values() if p.code in ('fampay','paytm') %}<option value="{{p.id}}">{{p.name}}</option>{% endfor %}</select>
+<select name="days" style="margin:0"><option value="30">1 month</option><option value="90">3 months</option><option value="180">6 months</option><option value="365">1 year</option></select>
+<input name="custom_days" type="number" min="1" max="3650" placeholder="or custom days" style="margin:0;width:140px">
+<button>Unlock</button></form></div>
+
 <div class="card"><h3>Send a message to this user</h3><form method="post" action="/admin/users/{{t.id}}/message" class="row"><input type="hidden" name="csrf" value="{{csrf}}"><input name="message" maxlength="300" required placeholder="Shows in their bell" style="flex:1;margin:0;min-width:200px"><button>Send</button></form></div>
 
 <div class="grid"><div class="stat"><small>Success balance</small><div>{{s.balance|rs}}</div></div><div class="stat"><small>Orders</small><div>{{s.total}}</div></div><div class="stat"><small>Successful</small><div class="SUCCESS">{{s.ok}}</div></div><div class="stat"><small>Failed</small><div class="FAILED">{{s.failed}}</div></div><div class="stat"><small>Pending</small><div class="PENDING">{{s.pending}}</div></div><div class="stat"><small>Pending amount</small><div>{{s.pend_amt|rs}}</div></div></div>

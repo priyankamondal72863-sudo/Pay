@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: zyvo-gateway
+    name: payment-gateway
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt

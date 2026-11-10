@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: ZYVO PAY API
+  title: PAYMENT GATEWAY API
   version: "1.0"
   description: |
     Create UPI payments, poll their status and receive signed webhooks.
@@ -107,7 +107,7 @@ webhooks:
     post:
       summary: Signed payment event sent to your https endpoint
       description: |
-        Headers: X-Zyvo-Timestamp (unix seconds) and X-Zyvo-Signature ("sha256=" + hex).
+        Headers: X-Payment-Gateway-Timestamp (unix seconds) and X-Payment-Gateway-Signature ("sha256=" + hex).
         Signature = HMAC_SHA256(webhook_secret, timestamp + "." + rawBody). Use the RAW body,
         reject timestamps older than 5 minutes, compare in constant time, deduplicate on event_id,
         and reply with any 2xx status. Events: payment.success, payment.failed, payment.expired,

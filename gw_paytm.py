@@ -34,7 +34,7 @@ def _post(cfg, env, path, body, client_id=None):
 def _has_key(cfg): return bool((cfg.get("key") or "").strip())
 
 def new_order_id():
-    """PTM + UTC timestamp + 4 digits (same shape the working Zyvo Pay site uses)."""
+    """PTM + UTC timestamp + 4 digits (same shape the working Payment Gateway site uses)."""
     import datetime as _d
     return "PTM" + _d.datetime.utcnow().strftime("%Y%m%d%H%M%S") + "".join(random.choice(string.digits) for _ in range(4))
 

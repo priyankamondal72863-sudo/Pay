@@ -1,4 +1,4 @@
-# Zyvo Gateway — Part 1
+# Payment Gateway — Part 1
 ## Render deploy
 1. Push to GitHub → Render "New Web Service" (or Blueprint using render.yaml). Build: `pip install -r requirements.txt`, Start: `gunicorn app:app -c gunicorn.conf.py` (or `uvicorn main:app --host 0.0.0.0 --port $PORT` — both work)
 2. Env vars: SECRET_KEY (random, never change later or saved credentials become unreadable), ADMIN_EMAIL, ADMIN_PASSWORD (creates Owner on first boot), DATABASE_URL (Render Postgres internal URL).
@@ -22,7 +22,7 @@ The service pings its own /healthz every 5 min (uses RENDER_EXTERNAL_URL, set by
 - FamPay orders get a unique paise amount (+0..+99 paise) so each payment can be matched to its order.
 
 ## Part 4 (docs + theme)
-- Docs page (/docs-api) now has 3 tabs: Getting started, Overview, AI integration prompt. Downloads: /openapi.yaml, /downloads/zyvopay_telegram_bot.py, /docs-api.txt, and the prompt as .txt for the chosen language/target.
+- Docs page (/docs-api) now has 3 tabs: Getting started, Overview, AI integration prompt. Downloads: /openapi.yaml, /downloads/payment_gateway_telegram_bot.py, /docs-api.txt, and the prompt as .txt for the chosen language/target.
 - Owner Panel -> "Public base URL": set your public Render link or domain; it is used in docs, OpenAPI, bot file and prompts (empty = automatic).
 - Pink/white theme everywhere; dark mode is plum/pink.
 

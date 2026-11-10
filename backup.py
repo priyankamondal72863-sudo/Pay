@@ -19,7 +19,7 @@ def export_all(db):
     out = {}
     for t in _tables():
         out[t.name] = [{k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in r.items()} for r in db.execute(select(t)).mappings()]
-    return {"format": "zyvo-backup", "version": 1, "created": now().isoformat() + "Z", "tables": out}
+    return {"format": "payment-gateway-backup", "version": 1, "created": now().isoformat() + "Z", "tables": out}
 
 def _read(raw):
     if len(raw) > MAX_UPLOAD: raise ValueError("File is too large (max 100 MB).")
@@ -27,8 +27,8 @@ def _read(raw):
         d = zlib.decompressobj(31); raw = d.decompress(raw, 500 * 1024 * 1024)
         if d.unconsumed_tail: raise ValueError("Backup is too large once unpacked.")
     try: data = json.loads(raw.decode("utf-8-sig"))
-    except Exception: raise ValueError("This is not a valid Zyvo backup file.")
-    if not isinstance(data, dict) or data.get("format") != "zyvo-backup" or not isinstance(data.get("tables"), dict): raise ValueError("This is not a Zyvo backup file.")
+    except Exception: raise ValueError("This is not a valid Payment Gateway backup file.")
+    if not isinstance(data, dict) or data.get("format") not in ("payment-gateway-backup", "zyvo-backup") or not isinstance(data.get("tables"), dict): raise ValueError("This is not a Payment Gateway backup file.")
     return data
 
 def _coerce(t, row):
@@ -87,7 +87,7 @@ def backup_download(request: Request, u=Depends(owner_only), db=Depends(get_db))
     data = export_all(db); n = sum(len(v) for v in data["tables"].values())
     audit(db, u.id, "backup_download", f"{n} records"); db.commit()
     body = gzip.compress(json.dumps(data, separators=(",", ":"), default=str).encode("utf-8"), 6)
-    return Response(body, media_type="application/gzip", headers={"Content-Disposition": f'attachment; filename="zyvo-backup-{now():%Y%m%d-%H%M}.json.gz"', "Cache-Control": "no-store"})
+    return Response(body, media_type="application/gzip", headers={"Content-Disposition": f'attachment; filename="payment-gateway-backup-{now():%Y%m%d-%H%M}.json.gz"', "Cache-Control": "no-store"})
 @router.post("/admin/backup/restore")
 async def backup_restore(request: Request, file: UploadFile = File(...), mode: str = Form("merge"), confirm: str = Form(""), csrf: str = Form(""), u=Depends(owner_only), db=Depends(get_db)):
     check_csrf(request, csrf)

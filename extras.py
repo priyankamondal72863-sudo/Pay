@@ -53,7 +53,7 @@ def _send(tg, em, kind, msg):
     if tg and tok:
         try: requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": tg, "text": msg}, timeout=8)
         except Exception: pass
-    if em: send_mail(em, f"Zyvo: {kind}", msg)
+    if em: send_mail(em, f"Payment Gateway: {kind}", msg)
 def notify(db, uid, kind, msg):
     s, u = db.get(UserSettings, uid), db.get(User, uid)
     if not u: return
@@ -89,7 +89,7 @@ def deliver(db, d):
         ts = str(int(time.time())); secret = sec.dec(ep.secret_enc)["s"]
         try:
             r = requests.post(ep.url, data=d.payload, timeout=10, allow_redirects=False, headers={
-                "Content-Type": "application/json", "X-Zyvo-Timestamp": ts, "X-Zyvo-Signature": "sha256=" + sign(secret, ts, d.payload)})
+                "Content-Type": "application/json", "X-Payment-Gateway-Timestamp": ts, "X-Payment-Gateway-Signature": "sha256=" + sign(secret, ts, d.payload)})
             d.last_code = r.status_code; ok = 200 <= r.status_code < 300; d.last_error = "" if ok else f"HTTP {r.status_code}"
         except Exception as e: d.last_error = str(e)[:200]
     d.attempts += 1; failed = False
@@ -197,7 +197,7 @@ def wh_regen(request: Request, csrf: str = Form(""), u=Depends(current), db=Depe
 def _send_test(db, u):
     ep = db.scalar(select(WebhookEndpoint).where(WebhookEndpoint.user_id == u.id))
     if not ep: raise HTTPException(400, "Configure a webhook URL first")
-    return deliver(db, _new_delivery(db, u.id, "test:" + secrets.token_hex(6), "webhook.test", {"message": "Test event from Zyvo Gateway"}))
+    return deliver(db, _new_delivery(db, u.id, "test:" + secrets.token_hex(6), "webhook.test", {"message": "Test event from Payment Gateway"}))
 @router.post("/webhooks/test")
 def wh_test(request: Request, csrf: str = Form(""), u=Depends(current), db=Depends(get_db)):
     check_csrf(request, csrf)
@@ -279,7 +279,7 @@ def forgot(request: Request, email: str = Form(), csrf: str = Form(""), db=Depen
     u = db.scalar(select(User).where(User.email == email.strip().lower()))
     if u and u.status == "active":
         link = f"{base_url(request)}/reset/{ser.dumps({'u': u.id, 'h': u.pw_hash[-12:]})}"
-        if not send_mail(u.email, "Reset your Zyvo password", f"Open this link within 1 hour to reset your password:\n{link}"):
+        if not send_mail(u.email, "Reset your Payment Gateway password", f"Open this link within 1 hour to reset your password:\n{link}"):
             flash(request, "Email service is not configured on this server (SMTP_* variables).", "err"); return go("/forgot")
     flash(request, "If that email exists, a reset link has been sent."); return go("/login")
 def _tok(db, token):

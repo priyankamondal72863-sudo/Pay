@@ -31,11 +31,11 @@
 <div class="tabs"><button class="tab on" data-t="start">Getting started</button><button class="tab" data-t="overview">Overview</button><button class="tab" data-t="ai">AI integration prompt</button></div>
 
 <div class="pane on" id="p-start">
-<div class="card hero2"><span class="pillb">API v1</span><h1>ZYVO PAY API reference</h1>
+<div class="card hero2"><span class="pillb">API v1</span><h1>PAYMENT GATEWAY API reference</h1>
 <p class="mut">Create UPI checkouts, poll payment status and receive signed payment events. All responses are JSON and all amounts are in INR.</p>
 <a class="btn" href="{{'/keys' if user else '/register'}}">Create API key</a>
 <a class="btn2" href="/openapi.yaml" download>Download OpenAPI</a>
-<a class="btn2" href="/downloads/zyvopay_telegram_bot.py" download>Download Python Telegram bot</a>
+<a class="btn2" href="/downloads/payment_gateway_telegram_bot.py" download>Download Python Telegram bot</a>
 <a class="btn2" href="/docs-api.txt" download>Download documentation (.txt)</a></div>
 <div class="card hl"><div class="eyebrow">BASE URL</div><div class="url">{{base}}/api</div>{% if base.startswith('https://') %}<span class="chip2">HTTPS recommended ✓</span>{% else %}<span class="chip2 w">Use HTTPS in production</span>{% endif %}</div>
 <div class="card"><h3><i>1</i>Create a key</h3><p>Open <a href="/keys"><b>API keys</b></a>, enter your shop name and generate a live key. Use Show / Copy to read it.</p>
@@ -103,8 +103,8 @@ unpaid → {"status":"pending|failed|expired","data":null}</pre>
 
 <div class="card"><h3><i>7</i>Webhooks (automatic success message)</h3>
 <p>Set your https URL in <b>Webhooks</b> and copy the signing secret. Events: <b>payment.success</b>, payment.failed, payment.expired, webhook.test.</p>
-<pre>Headers:  X-Zyvo-Timestamp: 1731234567
-          X-Zyvo-Signature: sha256=HEX
+<pre>Headers:  X-Payment-Gateway-Timestamp: 1731234567
+          X-Payment-Gateway-Signature: sha256=HEX
 Signature = HMAC_SHA256(secret, timestamp + "." + rawBody)
 
 {"event":"payment.success","event_id":"PTM2026...:payment.success",
@@ -138,8 +138,8 @@ def create_payment(amount, order_id):
 
 @app.post("/payment-webhook")
 def webhook():
-    ts = request.headers.get("X-Zyvo-Timestamp", "0")
-    sig = request.headers.get("X-Zyvo-Signature", "")
+    ts = request.headers.get("X-Payment-Gateway-Timestamp", "0")
+    sig = request.headers.get("X-Payment-Gateway-Signature", "")
     body = request.get_data(as_text=True)
     exp = "sha256=" + hmac.new(SECRET.encode(), (ts + "." + body).encode(), hashlib.sha256).hexdigest()
     if abs(time.time() - int(ts)) > 300 or not hmac.compare_digest(exp, sig): abort(401)
@@ -155,9 +155,9 @@ curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_POST=>true,
 $res = json_decode(curl_exec($ch), true);
 header("Location: ".$res["payment_url"]);
 // webhook
-$body = file_get_contents("php://input"); $ts = $_SERVER["HTTP_X_ZYVO_TIMESTAMP"];
+$body = file_get_contents("php://input"); $ts = $_SERVER["HTTP_X_PAYMENT_GATEWAY_TIMESTAMP"];
 $exp = "sha256=".hash_hmac("sha256", "$ts.$body", $SECRET);
-if (!hash_equals($exp, $_SERVER["HTTP_X_ZYVO_SIGNATURE"])) { http_response_code(401); exit; }</pre>
+if (!hash_equals($exp, $_SERVER["HTTP_X_PAYMENT_GATEWAY_SIGNATURE"])) { http_response_code(401); exit; }</pre>
 <p><b>Node.js (18+)</b></p>
 <pre>const crypto = require("crypto");
 const r = await fetch(BASE + "/api/v1/payment/create", { method: "POST",
@@ -208,6 +208,6 @@ $('g-out').textContent='Generating…';try{var r=await fetch('/docs-api/prompt?'
 $('g-sub').textContent=$('g-lang').value+' · '+$('g-target').selectedOptions[0].text}
 $('g-go').onclick=gen;['g-lang','g-target','g-gw'].forEach(function(i){$(i).onchange=gen});
 $('g-cp').onclick=async function(){var b=this,t=$('g-out').textContent;try{await navigator.clipboard.writeText(t)}catch(_){var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}var o=b.textContent;b.textContent='Copied ✓';setTimeout(function(){b.textContent=o},1500)};
-$('g-dl').onclick=function(){var l=$('g-lang').value.toLowerCase().replace(/[^a-z0-9]+/g,'-');var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('g-out').textContent],{type:'text/plain'}));a.download='zyvopay-prompt-'+l+'-'+$('g-target').value+'.txt';document.body.appendChild(a);a.click();a.remove()};
+$('g-dl').onclick=function(){var l=$('g-lang').value.toLowerCase().replace(/[^a-z0-9]+/g,'-');var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('g-out').textContent],{type:'text/plain'}));a.download='payment-gateway-prompt-'+l+'-'+$('g-target').value+'.txt';document.body.appendChild(a);a.click();a.remove()};
 })();
 </script>{% endblock %}

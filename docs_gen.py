@@ -29,10 +29,10 @@ def build_prompt(base, lang, target, gateway="", details=""):
     lang = lang if lang in LANGS else "JavaScript"; target = target if target in TARGETS else "website_existing"
     gw = gateway if gateway in ("paytm", "fampay") else ""
     gwline = (f'Always send "gateway": "{gw}" (this merchant uses {gw} only; ignore every detail about the other gateway).' if gw
-              else 'Make the gateway configurable (env ZYVOPAY_GATEWAY = "paytm" or "fampay") and always send it explicitly.')
+              else 'Make the gateway configurable (env PAYMENT_GATEWAY_GATEWAY = "paytm" or "fampay") and always send it explicitly.')
     langname = "my project's language" if lang == "Other language" else lang
     ex = "existing " if target == "website_existing" else ""
-    out = f"""You are a senior {langname} engineer working directly inside my {ex}project. Implement a complete, production-ready ZYVO PAY integration for: {TARGETS[target]}. Inspect the repository first, then modify the real files; do not only give me a tutorial or isolated snippets. Preserve the existing architecture and UI. Make reasonable decisions without repeatedly asking me questions, and clearly report the files changed and how to test them when finished.
+    out = f"""You are a senior {langname} engineer working directly inside my {ex}project. Implement a complete, production-ready PAYMENT GATEWAY integration for: {TARGETS[target]}. Inspect the repository first, then modify the real files; do not only give me a tutorial or isolated snippets. Preserve the existing architecture and UI. Make reasonable decisions without repeatedly asking me questions, and clearly report the files changed and how to test them when finished.
 
 TASK
 {TARGET_TASKS[target]}
@@ -42,7 +42,7 @@ OFFICIAL SOURCES
 - API base URL: {api}
 - Full documentation (plain text): {base}/docs-api.txt
 - OpenAPI 3.1 specification: {base}/openapi.yaml
-- Environment variables: ZYVOPAY_API_KEY, ZYVOPAY_WEBHOOK_SECRET, ZYVOPAY_BASE_URL={api}
+- Environment variables: PAYMENT_GATEWAY_API_KEY, PAYMENT_GATEWAY_WEBHOOK_SECRET, PAYMENT_GATEWAY_BASE_URL={api}
 
 TECHNOLOGY
 - Implementation language: {lang}.
@@ -56,7 +56,7 @@ API SUMMARY (all amounts are rupees, INR)
 - {gwline}
 - FamPay note: the returned "amount" can include a unique paise adjustment (+0.00 to +0.99). The customer must pay EXACTLY the returned amount, so always display the response's amount, not the requested one.
 - Check status: GET {api}/v1/payment/status/ORDER_ID (or POST {api}/v1/payment/verify {{"order_id": "..."}}). Statuses: PENDING, SUCCESS (the only paid state), FAILED, EXPIRED, REFUND_PENDING, REFUNDED. Poll every 3-5 seconds while the customer pays.
-- Webhook: the merchant sets an https URL in the dashboard. Headers X-Zyvo-Timestamp (unix seconds) and X-Zyvo-Signature ("sha256=" + hex). Signature = HMAC_SHA256(ZYVOPAY_WEBHOOK_SECRET, timestamp + "." + rawBody). Events: payment.success, payment.failed, payment.expired, payment.refunded, webhook.test. Payload fields: event, event_id, order_id, pay_id, transaction_id, amount, currency, status, gateway.
+- Webhook: the merchant sets an https URL in the dashboard. Headers X-Payment-Gateway-Timestamp (unix seconds) and X-Payment-Gateway-Signature ("sha256=" + hex). Signature = HMAC_SHA256(PAYMENT_GATEWAY_WEBHOOK_SECRET, timestamp + "." + rawBody). Events: payment.success, payment.failed, payment.expired, payment.refunded, webhook.test. Payload fields: event, event_id, order_id, pay_id, transaction_id, amount, currency, status, gateway.
 
 REQUIREMENTS
 1. Generate a unique order_id for every purchase and store it with the expected amount.

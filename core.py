@@ -13,7 +13,7 @@ import security as sec
 import providers as gw
 import time as _time
 
-app = FastAPI(title="Zyvo Gateway")
+app = FastAPI(title="Payment Gateway")
 app.add_middleware(SessionMiddleware, secret_key=sec.SECRET, https_only=bool(os.getenv("RENDER")), same_site="lax", max_age=86400 * 7)
 _HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIRS = [os.path.join(_HERE, "templates"), _HERE]  # works with a templates/ folder OR html files placed next to main.py
@@ -64,7 +64,7 @@ def _startup_inner():
 _SET = {}  # tiny per-process cache (30s) so an admin change reaches every gunicorn worker quickly
 def get_setting(key, default=""):
     c = _SET.get(key)
-    if c and _time.time() - c[1] < 30: return c[0] or default
+    if c and _time.time() - c[1] < 5: return c[0] or default
     try:
         with SessionLocal() as d: r = d.get(Setting, key); v = r.value if r else ""
     except Exception: return default
@@ -74,7 +74,17 @@ def set_setting(db, key, value):
     if r: r.value = value
     else: db.add(Setting(key=key, value=value))
     db.commit(); _SET.pop(key, None)
-def base_url(request): return get_setting("base_url").strip().rstrip("/") or os.getenv("RENDER_EXTERNAL_URL") or str(request.base_url).rstrip("/")
+def base_url(request):
+    """Public URL used in the docs, downloads (txt / yaml / bot), payment links and QR urls.
+    1) the URL saved by the owner in Owner Panel (always wins)  2) the address the visitor actually used  3) Render's own URL."""
+    v = get_setting("base_url").strip().rstrip("/")
+    if v.lower().endswith("/api"): v = v[:-4].rstrip("/")  # the docs add /api themselves
+    if v: return v
+    try:
+        h = request.headers; host = (h.get("x-forwarded-host") or h.get("host") or "").split(",")[0].strip()
+        if host: return f"{(h.get('x-forwarded-proto') or ('https' if os.getenv('RENDER') else request.url.scheme)).split(',')[0].strip()}://{host}"
+    except Exception: pass
+    return os.getenv("RENDER_EXTERNAL_URL") or str(request.base_url).rstrip("/")
 def render(request, name, user=None, **ctx):
     s = request.session
     if "csrf" not in s: s["csrf"] = secrets.token_hex(16)
@@ -159,15 +169,15 @@ def logout(request: Request, csrf: str = Form("")):
 @app.get("/docs-api.txt")  # downloadable plain-text docs (AI-ready)
 def docs_txt(request: Request):
     body = templates.get_template("docs_api.txt").render(base=base_url(request))
-    return Response(body, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="zyvopay-api-docs.txt"'})
+    return Response(body, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="payment-gateway-api-docs.txt"'})
 @app.get("/openapi.yaml")
 def openapi_yaml(request: Request):
     body = templates.get_template("openapi.yaml").render(base=base_url(request))
-    return Response(body, media_type="application/yaml; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="zyvopay-openapi.yaml"'})
-@app.get("/downloads/zyvopay_telegram_bot.py")
+    return Response(body, media_type="application/yaml; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="payment-gateway-openapi.yaml"'})
+@app.get("/downloads/payment_gateway_telegram_bot.py")
 def dl_tgbot(request: Request):
-    body = templates.get_template("zyvopay_telegram_bot.py").render(base=base_url(request))
-    return Response(body, media_type="text/x-python; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="zyvopay_telegram_bot.py"'})
+    body = templates.get_template("payment_gateway_telegram_bot.py").render(base=base_url(request))
+    return Response(body, media_type="text/x-python; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="payment_gateway_telegram_bot.py"'})
 @app.get("/docs-api/prompt")
 def docs_prompt(request: Request, lang: str = "JavaScript", target: str = "website_existing", gateway: str = "", details: str = ""):
     from docs_gen import build_prompt

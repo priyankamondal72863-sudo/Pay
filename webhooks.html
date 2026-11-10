@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block c %}<h2>Webhooks</h2>
 {% if newsecret %}<div class="card" style="border-color:var(--gold)"><b>Signing secret — copy now, shown only once.</b><code id="ws">{{newsecret}}</code><button onclick="navigator.clipboard.writeText(document.getElementById('ws').innerText);this.innerText='Copied'">Copy</button></div>{% endif %}
 <form class="card" method="post" action="/webhooks/save"><input type="hidden" name="csrf" value="{{csrf}}">
-<label>Webhook URL (public https)</label><input name="url" required value="{{ep.url if ep}}" placeholder="https://yoursite.com/zyvo-webhook">
+<label>Webhook URL (public https)</label><input name="url" required value="{{ep.url if ep}}" placeholder="https://yoursite.com/payment-gateway-webhook">
 <div class="row"><div style="flex:1"><label>Max retries</label><input type="number" name="max_retries" min="1" max="10" value="{{ep.max_retries if ep else 5}}"></div>
 <div style="flex:1"><label>Status</label><select name="enabled"><option value="1">Enabled</option><option value="0" {{'selected' if ep and not ep.enabled}}>Disabled</option></select></div></div><button>Save</button></form>
 {% if ep %}<div class="row" style="margin-bottom:14px"><form method="post" action="/webhooks/test"><input type="hidden" name="csrf" value="{{csrf}}"><button class="btn2">Send test event</button></form>

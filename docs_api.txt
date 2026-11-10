@@ -151,8 +151,8 @@ Never trust a redirect, a screenshot or a user-entered UTR.
  Events: payment.success, payment.failed, payment.expired,
          payment.refunded, webhook.test
  Headers sent to you:
-   X-Zyvo-Timestamp: unix seconds
-   X-Zyvo-Signature: sha256=HEX
+   X-Payment-Gateway-Timestamp: unix seconds
+   X-Payment-Gateway-Signature: sha256=HEX
  Signature = HMAC_SHA256(secret, timestamp + "." + rawBody)  (hex)
 
  Rules:
@@ -219,8 +219,8 @@ Never trust a redirect, a screenshot or a user-entered UTR.
 
  @app.post("/payment-webhook")
  def webhook():
-     ts = request.headers.get("X-Zyvo-Timestamp", "0")
-     sig = request.headers.get("X-Zyvo-Signature", "")
+     ts = request.headers.get("X-Payment-Gateway-Timestamp", "0")
+     sig = request.headers.get("X-Payment-Gateway-Signature", "")
      body = request.get_data(as_text=True)
      exp = "sha256=" + hmac.new(SECRET.encode(), (ts + "." + body).encode(),
                                 hashlib.sha256).hexdigest()
@@ -240,9 +240,9 @@ Never trust a redirect, a screenshot or a user-entered UTR.
  header("Location: ".$res["payment_url"]);
  // webhook:
  // $body = file_get_contents("php://input");
- // $ts = $_SERVER["HTTP_X_ZYVO_TIMESTAMP"];
+ // $ts = $_SERVER["HTTP_X_PAYMENT_GATEWAY_TIMESTAMP"];
  // $exp = "sha256=".hash_hmac("sha256", "$ts.$body", $SECRET);
- // if (!hash_equals($exp, $_SERVER["HTTP_X_ZYVO_SIGNATURE"])) { http_response_code(401); exit; }
+ // if (!hash_equals($exp, $_SERVER["HTTP_X_PAYMENT_GATEWAY_SIGNATURE"])) { http_response_code(401); exit; }
 
  --- Node.js (18+, Express) ---
  const crypto = require("crypto");
@@ -252,10 +252,10 @@ Never trust a redirect, a screenshot or a user-entered UTR.
    body: JSON.stringify({ amount: 100, order_id: "ORDER10001", gateway: "paytm" }) });
  const pay = await r.json();          // pay.payment_url
  // webhook: use express.raw({type: "application/json"})
- const ts = req.headers["x-zyvo-timestamp"];
+ const ts = req.headers["x-payment-gateway-timestamp"];
  const exp = "sha256=" + crypto.createHmac("sha256", SECRET)
                                .update(ts + "." + req.body.toString()).digest("hex");
- // compare with req.headers["x-zyvo-signature"] using crypto.timingSafeEqual
+ // compare with req.headers["x-payment-gateway-signature"] using crypto.timingSafeEqual
 
  --- Telegram bot (python-telegram-bot v20) ---
  async def buy(update, ctx):
