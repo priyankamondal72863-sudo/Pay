@@ -63,6 +63,7 @@ class Txn(Base):
     customer: Mapped[str] = mapped_column(Text, default="{}")
     qr_data: Mapped[str] = mapped_column(Text, default="")
     provider_ref: Mapped[str] = mapped_column(String(80), default="")
+    msg_key: Mapped[str] = mapped_column(String(64), default="")  # id of the bank/FamPay email that confirmed this payment (one email can confirm only one order)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     created: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
     updated: Mapped[datetime] = mapped_column(DateTime, default=now)

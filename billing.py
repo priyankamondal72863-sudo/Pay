@@ -158,7 +158,6 @@ def my_sub(request: Request, u=Depends(current), db=Depends(get_db)):
 @router.post("/subscription/buy")
 def buy(request: Request, plan_id: int = Form(), days: int = Form(0), csrf: str = Form(""), u=Depends(current), db=Depends(get_db)):
     check_csrf(request, csrf)
-    if u.role == "owner": flash(request, "The owner account has full access. Use Owner Panel to assign plans.", "err"); return go("/subscription")
     if not sec.rate_ok(f"buy:{u.id}", 10, 300): flash(request, "Too many attempts. Wait a few minutes.", "err"); return go("/subscription")
     p = db.get(Plan, plan_id)
     if not p or not p.active or p.code in HIDE: flash(request, "This plan is not available.", "err"); return go("/subscription")

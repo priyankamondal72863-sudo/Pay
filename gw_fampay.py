@@ -42,7 +42,7 @@ def _parse(raw, sender_filter):
     auth = " ".join(msg.get_all("Authentication-Results") or []).lower()
     u = _UTR.search(body)
     mid = (msg.get("Message-ID") or raw[:200].decode("latin1"))
-    return {"paise": paise, "ts": ts.astimezone(timezone.utc), "dkim": "dkim=pass" in auth,
+    return {"paise": paise, "ts": ts.astimezone(timezone.utc), "dkim": "dkim=pass" in auth, "key": hashlib.sha1(mid.encode()).hexdigest()[:24],
             "utr": u.group(1) if u else "MSG" + hashlib.sha1(mid.encode()).hexdigest()[:12].upper()}
 
 def _login(cfg):
@@ -74,12 +74,13 @@ def create(cfg, env, pay_id, amount_paise):
     uri = f"upi://pay?pa={quote(cfg['upi'])}&pn={quote(cfg['shop'])}&am={amount_paise/100:.2f}&cu=INR&tn={quote('Order ' + pay_id[-8:])}"
     return {"qr_data": uri, "provider_ref": ""}
 
-def status(cfg, env, pay_id, amount=None, since=None, **kw):
+def status(cfg, env, pay_id, amount=None, since=None, used_keys=(), **kw):
     if not amount or not since: return {"state": "PENDING", "order_id": pay_id, "amount": 0, "txn_id": ""}
-    since = (since if since.tzinfo else since.replace(tzinfo=timezone.utc)) - timedelta(seconds=90)
+    since = (since if since.tzinfo else since.replace(tzinfo=timezone.utc)) - timedelta(seconds=30)
     for r in sorted(_scan(cfg), key=lambda x: x["ts"]):
+        if r["key"] in used_keys: continue  # this email already confirmed another order - look at the next one
         if r["dkim"] and r["paise"] == amount and r["ts"] >= since:
-            return {"state": "SUCCESS", "order_id": pay_id, "amount": amount, "txn_id": r["utr"]}
+            return {"state": "SUCCESS", "order_id": pay_id, "amount": amount, "txn_id": r["utr"], "key": r["key"]}
     return {"state": "PENDING", "order_id": pay_id, "amount": 0, "txn_id": ""}
 
 def test(cfg, env):

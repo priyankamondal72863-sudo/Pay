@@ -36,6 +36,7 @@ def _startup_inner():
                           ("address", "TEXT DEFAULT ''"), ("photo_b64", "TEXT DEFAULT ''"), ("photo_mime", "VARCHAR(20) DEFAULT ''"), ("photo_v", "INTEGER DEFAULT 0"),
                           ("trial_used", "BOOLEAN DEFAULT FALSE"), ("notif_seen", "TIMESTAMP"), ("terms_at", "TIMESTAMP")],
                 "plans": [("code", "VARCHAR(20) DEFAULT ''"), ("prices", "TEXT DEFAULT ''"), ("hours", "INTEGER DEFAULT 0"), ("active", "BOOLEAN DEFAULT TRUE"), ("sort", "INTEGER DEFAULT 0")],
+                "transactions": [("msg_key", "VARCHAR(64) DEFAULT ''")],
                 "subscriptions": [("value", "INTEGER DEFAULT 0"), ("days", "INTEGER DEFAULT 0"), ("source", "VARCHAR(12) DEFAULT 'admin'")]}
         for tbl, cols in want.items():
             have = [c["name"] for c in inspect(engine).get_columns(tbl)]
@@ -392,13 +393,16 @@ def _refresh(db, t):
     cfg, env = cfg_for(db, t.user_id, t.gateway, enabled_only=False)  # pending/test payments must verify even if the gateway is not enabled
     if cfg:
         try:
-            r = gw.get(t.gateway).status(cfg, env, t.pay_id, amount=t.amount, since=t.created)
+            used = set(db.scalars(select(Txn.msg_key).where(Txn.user_id == t.user_id, Txn.gateway == t.gateway, Txn.msg_key != "", Txn.id != t.id)))  # emails that already confirmed another order
+            r = gw.get(t.gateway).status(cfg, env, t.pay_id, amount=t.amount, since=t.created, used_keys=used)
             t = db.scalar(select(Txn).where(Txn.id == t.id).with_for_update().execution_options(populate_existing=True))
             if t.status in ("PENDING", "CREATED"):
                 if r["state"] == "SUCCESS":
-                    dup = r["txn_id"] and db.scalar(select(Txn.id).where(Txn.gateway == t.gateway, Txn.user_id == t.user_id, Txn.provider_ref == r["txn_id"], Txn.id != t.id))
+                    key = r.get("key", "")
+                    if key: dup = key in used
+                    else: dup = r["txn_id"] and db.scalar(select(Txn.id).where(Txn.gateway == t.gateway, Txn.user_id == t.user_id, Txn.provider_ref == r["txn_id"], Txn.id != t.id))
                     if dup: audit(db, t.user_id, "verify_dup_utr", t.pay_id)
-                    elif r["order_id"] == t.pay_id and r["amount"] == t.amount: t.status, t.provider_ref, t.updated = "SUCCESS", r["txn_id"] or t.provider_ref, now()
+                    elif r["order_id"] == t.pay_id and r["amount"] == t.amount: t.status, t.provider_ref, t.msg_key, t.updated = "SUCCESS", r["txn_id"] or t.provider_ref, r.get("key", ""), now()
                     else: audit(db, t.user_id, "verify_mismatch", t.pay_id)
                 elif r["state"] == "FAILED": t.status, t.updated = "FAILED", now()
         except Exception as e: audit(db, t.user_id, "verify_error", f"{t.pay_id}: {e}")
@@ -483,7 +487,7 @@ def checkout_php(request: Request, amount: float, api_key: str = "", order_id: s
 @app.get("/pay/{pay_id}")
 def pay_page(pay_id: str, request: Request, db: Session = Depends(get_db)):
     t = _pay(db, pay_id); m = db.get(User, t.user_id)
-    return render(request, "checkout.html", None, t=t, merchant=(m.business_name or m.name), mphoto=(f"/profile/photo/{m.id}?v={m.photo_v}" if m.photo_b64 else ""), secs=max(0, int((t.expires_at - now()).total_seconds())), ret=("/subscription" if (t.merchant_order_id or "").startswith("SUB-") else ""))
+    return render(request, "checkout.html", None, t=t, merchant=(m.business_name or m.name), mphoto=(f"/profile/photo/{m.id}?v={m.photo_v}" if m.photo_b64 else ""), secs=max(0, int((t.expires_at - now()).total_seconds())), ret=("/subscription" if (t.merchant_order_id or "").startswith("SUB-") else ""), back=("/subscription" if (t.merchant_order_id or "").startswith("SUB-") else ("/gateways" if (t.merchant_order_id or "").startswith("TEST-") else "")))
 @app.get("/pay/{pay_id}/qr.svg")
 def pay_qr(pay_id: str, db: Session = Depends(get_db)):
     t = _pay(db, pay_id); buf = io.BytesIO(); segno.make(t.qr_data, error="m").save(buf, kind="svg", scale=8, border=2)
